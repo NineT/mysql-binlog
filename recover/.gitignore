@@ -1,0 +1,6 @@
+vendor
+.idea
+*.log
+logs
+bin
+recover
