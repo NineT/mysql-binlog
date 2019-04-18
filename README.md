@@ -5,12 +5,14 @@ here including three parts: [backup](./backup/README.md), [merge](./merge/README
 
 ## Illustration  
 
-as three module to show the function
+as three module to show the function mainly arch to dump from MySQL to generate binlog file
+![image](./images/mysql-binlog.png)
+
 
 ### backup 
 * [README](./backup/README.md)  
 	slave dump binlog from MySQL server and save the binlog event into kv storage which is leveldb, key is the uniq key on table schema infor, and value is unit proto value. 
-
+    
 
 ### merge  
 * [README](./merge/README.md)  
