@@ -31,8 +31,10 @@ const (
 
 // DataEvent
 type DataEvent struct {
-	Header *replication.EventHeader
-	Data   []byte
+	Header *replication.EventHeader // event header
+	Data   []byte                   // data
+	Gtid   []byte                   // gtid
+	IsDDL  bool                     // is ddl
 }
 
 // Binlog 每个生成的binlog文件都对应一个结构
@@ -88,17 +90,21 @@ func NewBinlogWriter(path, table string, curr uint32, compress bool, desc *DataE
 }
 
 // Binlog2Data: data event from binlog event
-func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte) *DataEvent {
+func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, uuid []byte, ddl bool) *DataEvent {
 	if checksumAlg == replication.BINLOG_CHECKSUM_ALG_CRC32 {
 		return &DataEvent{
 			Header: ev.Header,
 			Data:   ev.RawData[replication.EventHeaderSize : len(ev.RawData)-CRC32Size],
+			Gtid:   uuid,
+			IsDDL:  ddl,
 		}
 	}
 
 	return &DataEvent{
 		Header: ev.Header,
 		Data:   ev.RawData[replication.EventHeaderSize:],
+		Gtid:   uuid,
+		IsDDL:  ddl,
 	}
 }
 

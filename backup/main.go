@@ -4,20 +4,17 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/juju/errors"
+	"github.com/zssky/log"
 	"os"
 	"os/signal"
 	"runtime/pprof"
-	"sync"
-
-	"github.com/juju/errors"
-	"github.com/zssky/log"
 
 	"github.com/mysql-binlog/common/client"
 	"github.com/mysql-binlog/common/db"
 	"github.com/mysql-binlog/common/final"
 	"github.com/mysql-binlog/common/inter"
 
-	"github.com/mysql-binlog/backup/binlog"
 	"github.com/mysql-binlog/backup/handler"
 )
 
@@ -102,14 +99,7 @@ func initiate() {
 	}
 
 	// init merge config
-	mc = &handler.MergeConfig{
-		FinalTime:       finalTime,
-		SnapshotPath:    inter.StdPath(sp),
-		StartPos:        off,
-		TableHandlers:   make(map[string]*binlog.TableEventHandler),
-		DumpMySQLConfig: dump,
-		Wgs:             make(map[string]*sync.WaitGroup),
-	}
+	mc = handler.NewMergeConfig(finalTime, sp, off, dump)
 
 	// init after math
 	errs := make(chan interface{}, 4)

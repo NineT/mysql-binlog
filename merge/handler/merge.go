@@ -50,7 +50,7 @@ type MergeConfig struct {
 	StartPosition *inter.BinlogPosition // StartPosition 初始位置
 	StopPosition  *inter.BinlogPosition // StopPosition 結束位置
 
-	TableHandlers   map[string]*binlog.TableEventHandler // TableHandlers 每张表的操作
+	TableHandlers   map[string]*binlog.TableEventHandler // tableHandlers 每张表的操作
 	DumpMySQLConfig *cdb.MetaConf                        // DumpMySQLConfig dump mysql 的操作
 	Wgs             map[string]*sync.WaitGroup           // Wgs wait group 用来做携程之间的等待操作
 }

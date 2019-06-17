@@ -1,11 +1,10 @@
 package binlog
 
 import (
+	"github.com/mysql-binlog/siddontang/go-mysql/replication"
 	"sync"
 
 	"github.com/zssky/log"
-
-	"github.com/mysql-binlog/siddontang/go-mysql/replication"
 
 	"github.com/mysql-binlog/common/final"
 	blog "github.com/mysql-binlog/common/log"
@@ -13,25 +12,18 @@ import (
 
 // TableEventHandler 表的事件处理器
 type TableEventHandler struct {
-	Table     string             // Table name
-	Size      int64              // current binlog size
-	After     *final.After       // after math
-	Stamp     int64              // timestamp for binlog file name eg. 1020040204.log
-	EventChan chan *Transaction  // transaction channel 事件队列
-	Wg        *sync.WaitGroup    // Master wait group
-	Writer    *blog.BinlogWriter // binlog writer
-}
-
-// Transaction package
-type Transaction struct {
-	TableMap *blog.DataEvent // table map event
-	Event    *blog.DataEvent // DataEvent  including update, Delete, insert
-	Gtid     *blog.DataEvent // gtid event
-	Begin    *blog.DataEvent // begin event
+	Table     string               // Table name
+	Size      int64                // current binlog size
+	After     *final.After         // after math
+	Stamp     int64                // timestamp for binlog file name eg. 1020040204.log
+	EventChan chan *blog.DataEvent // transaction channel 事件队列
+	GtidChan  chan []byte          // gtid chan using
+	Wg        *sync.WaitGroup      // Master wait group
+	Writer    *blog.BinlogWriter   // binlog writer
 }
 
 // NewEventHandler
-func NewEventHandler(path, table string, curr uint32, compress bool, desc *blog.DataEvent, after *final.After) (*TableEventHandler, error) {
+func NewEventHandler(path, table string, curr uint32, compress bool, desc *blog.DataEvent, after *final.After, gch chan []byte) (*TableEventHandler, error) {
 	wg := &sync.WaitGroup{}
 
 	w, err := blog.NewBinlogWriter(path, table, curr, compress, desc)
@@ -45,7 +37,8 @@ func NewEventHandler(path, table string, curr uint32, compress bool, desc *blog.
 		After: after,
 		Stamp: int64(curr),
 		// channel init
-		EventChan: make(chan *Transaction, 64),
+		EventChan: make(chan *blog.DataEvent, 64),
+		GtidChan:  gch,
 		Wg:        wg,
 		Writer:    w,
 	}
@@ -81,44 +74,29 @@ func (h *TableEventHandler) HandleLogEvent() {
 }
 
 // handle handle binlog event into binlog file
-func (h *TableEventHandler) handle(t *Transaction) error {
+func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 	// wg done
 	defer h.Wg.Done()
 
-	// write begin
-	switch t.Event.Header.EventType {
-	case replication.WRITE_ROWS_EVENTv0,
-		replication.WRITE_ROWS_EVENTv1,
-		replication.WRITE_ROWS_EVENTv2,
-		replication.DELETE_ROWS_EVENTv0,
-		replication.DELETE_ROWS_EVENTv1,
-		replication.DELETE_ROWS_EVENTv2,
-		replication.UPDATE_ROWS_EVENTv0,
-		replication.UPDATE_ROWS_EVENTv1,
-		replication.UPDATE_ROWS_EVENTv2:
-
+	switch t.Header.EventType {
+	case replication.XID_EVENT:
 		// write gtid
-		if err := h.Writer.WriteEvent(t.Gtid); err != nil {
+		if err := h.Writer.WriteEvent(t); err != nil {
 			return err
 		}
 
-		// write begin
-		if err := h.Writer.WriteEvent(t.Begin); err != nil {
-			return err
+		// return gtid
+		h.GtidChan <- t.Gtid
+	case replication.QUERY_EVENT:
+		if t.IsDDL { // only ddl then write log
+			// write gtid
+			if err := h.Writer.WriteEvent(t); err != nil {
+				return err
+			}
 		}
-
-		// write table map event
-		if err := h.Writer.WriteEvent(t.TableMap); err != nil {
-			return err
-		}
-
-		// write data
-		if err := h.Writer.WriteEvent(t.Event); err != nil {
-			return err
-		}
-
-		// write commit event using header
-		if err := h.Writer.Commit(t.Event.Header); err != nil {
+	default:
+		// write gtid
+		if err := h.Writer.WriteEvent(t); err != nil {
 			return err
 		}
 	}
