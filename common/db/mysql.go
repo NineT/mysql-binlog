@@ -24,6 +24,16 @@ type TableMeta struct {
 	KeyIndex []int
 }
 
+// BinlogOffset MySQL index offset
+type BinlogOffset struct {
+	File    string `json:"file"`  // file name
+	IP      string `json:"ip"`    // ip on MySQL node
+	Start   int64  `json:"start"` // start time
+	End     int64  `json:"end"`   // end time
+	GTID    string `json:"gtid"`  // GTID range offset
+	GTIDSet mysql.GTIDSet         // GTIDSet object
+}
+
 const indexName = 2
 const columnName = 4
 
@@ -139,7 +149,7 @@ func (c *MetaConf) queryUniqueIndexColumns(table string) []string {
 
 	// take the minimum size of columns and to prevent random choose using order by name
 	k := ""
-	s := length		// take column number as the max size
+	s := length // take column number as the max size
 	for key := range indexes {
 		// column index size
 		cs := len(indexes[key])
@@ -149,7 +159,7 @@ func (c *MetaConf) queryUniqueIndexColumns(table string) []string {
 		}
 
 		// equals size then using key order
-		if cs == s && strings.Compare(key, k) < 0{
+		if cs == s && strings.Compare(key, k) < 0 {
 			k = key
 			s = len(indexes[key])
 		}
@@ -356,4 +366,58 @@ func (c *MetaConf) Execute(bins []byte) error {
 func (c *MetaConf) Commit() error {
 	log.Debug("commit")
 	return c.Tx.Commit()
+}
+
+// hasGTID has GTIDSet open
+func (c *MetaConf) HasGTID() (bool, error) {
+	c.RefreshConnection()
+
+	rst, err := c.Conn.Query("show variables like \"%gtid_mode%\"")
+	if err != nil {
+		log.Error(err)
+		return false, err
+	}
+	defer rst.Close()
+
+	var mode, val string
+
+	for rst.Next() {
+		rst.Scan(&mode, &val)
+	}
+
+	if strings.EqualFold(val, "ON") {
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// Master status
+func (c *MetaConf) MasterStatus() (*BinlogOffset, error) {
+	c.RefreshConnection()
+
+	rst, err := c.Conn.Query("show master status")
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+	defer rst.Close()
+
+	var mode, val, doDB, igDB, gtid string
+
+	for rst.Next() {
+		rst.Scan(&mode, &val, &doDB, &igDB, &gtid)
+	}
+
+	g, err := mysql.ParseMysqlGTIDSet(gtid)
+	if err != nil {
+		return nil, err
+	}
+
+	pos := &BinlogOffset{
+		GTID:    gtid,
+		GTIDSet: g,
+	}
+
+	return pos, nil
 }

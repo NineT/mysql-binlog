@@ -1,12 +1,17 @@
 package log
 
 import (
+	"compress/zlib"
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 	"io"
+	"os"
 
 	"github.com/mysql-binlog/siddontang/go-mysql/replication"
 	"github.com/zssky/log"
+
+	"github.com/mysql-binlog/common/inter"
 )
 
 /***
@@ -24,184 +29,286 @@ const (
 	StmtEndFlag = 1
 )
 
+// DataEvent
+type DataEvent struct {
+	Header *replication.EventHeader
+	Data   []byte
+}
+
 // Binlog 每个生成的binlog文件都对应一个结构
 type BinlogWriter struct {
-	FormatDesc    *replication.FormatDescriptionEvent // FormatDesc 事件
-	EventHeader   *replication.EventHeader            // binlog 公共事件头
-	QueryEvent    *replication.QueryEvent             // query event 事件 包含commit/ begin ddl etc
-	TableMapEvent []byte                              // table map event 表map 事件 不包含event header, 不包含crc32
-	RowsHeader    *replication.RowsEventHeader        // InsertHeader 写入事件 body头字节
-	W             io.Writer                           // write write 生成binlog
-	crc           uint32                              // crc 32 值
-	logPos        uint32                              // logPos 文件位置
-	XID           uint64                              // XID 事务ID
-	NextPrefix    []byte                              // Next 下一个文件起始时间前缀 day_1549847236_{1549961464}.base64 前缀为： day_1549847236
+	Name       string                   // FileName file name
+	Dir        string                   // table write path
+	Desc       *DataEvent               // desc event
+	lastHeader *replication.EventHeader // lastHeader
+	f          *os.File                 // WriteEvent WriteEvent 生成binlog
+	iw         io.Writer                // iw io writer
+	compress   bool                     // compress
+	xid        uint64                   // transaction id
+	crc        uint32                   // crc 32 值
+	logPos     uint32                   // logPos 文件位置
+}
+
+// NewBinlogWriter new binlog writer for binlog write
+func NewBinlogWriter(path, table string, curr uint32, compress bool, desc *DataEvent) (*BinlogWriter, error) {
+	w := &BinlogWriter{
+		Name:     fmt.Sprintf("%d.log", curr),
+		Dir:      fmt.Sprintf("%s%s", path, table),
+		Desc:     desc,
+		compress: compress,
+	}
+
+	f, err := inter.CreateFile(fmt.Sprintf("%s/%s", w.Dir, w.Name))
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+
+	w.f = f  // set file
+	w.iw = f // set file writer
+	if compress { // 开启压缩
+		// zlib 压缩数据
+		iw := zlib.NewWriter(f)
+
+		// set writer
+		w.iw = iw
+	}
+
+	w.xid = 0
+	w.crc = 0
+	w.logPos = 0
+
+	if err := w.writeMagic(); err != nil {
+		log.Error(err)
+		return nil, err
+	}
+
+	// write , write desc
+	return w, w.writeDesc(curr)
+}
+
+// Binlog2Data: data event from binlog event
+func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte) *DataEvent {
+	if checksumAlg == replication.BINLOG_CHECKSUM_ALG_CRC32 {
+		return &DataEvent{
+			Header: ev.Header,
+			Data:   ev.RawData[replication.EventHeaderSize : len(ev.RawData)-CRC32Size],
+		}
+	}
+
+	return &DataEvent{
+		Header: ev.Header,
+		Data:   ev.RawData[replication.EventHeaderSize:],
+	}
 }
 
 // Clear 清除悬挂引用
 func (b *BinlogWriter) Clear() {
-	b.FormatDesc = nil
-	b.EventHeader = nil
-	b.QueryEvent = nil
-	b.TableMapEvent = nil
-	b.RowsHeader = nil
-	b.NextPrefix = nil
-	b.W = nil
+	b.f = nil
+	b.reset()
+}
+
+// reset binlog writer
+func (b *BinlogWriter) reset() {
+	b.xid = 0
 	b.crc = 0
 	b.logPos = 0
-	b.XID = 0
 }
 
-// WriteEventHeader binlog公共事件头
-func (b *BinlogWriter) WriteEventHeader(size int, t replication.EventType) error {
-	// 整个数据包长度 包括 header + row + crc32 {可能需要 + 1 flag}
-	b.EventHeader.EventSize = uint32(size) + CRC32Size
-	b.EventHeader.LogPos = b.logPos
-	b.EventHeader.EventType = t
-
-	// 计算crc32
-	h := b.EventHeader.Encode()
-	b.crc = crc32.ChecksumIEEE(h)
-
-	// 数据写入 writer
-	if _, err := b.W.Write(h); err != nil {
-		return err
-	}
-
-	// 重新计算位置
-	b.logPos += uint32(size)
-	return nil
-}
-
-// WriteEventFooter binlog 事件 footer
-func (b *BinlogWriter) WriteEventFooter() error {
-	log.Debug("WriteEventFooter crc32 ", b.crc)
-	ct := make([]byte, CRC32Size)
-	binary.LittleEndian.PutUint32(ct, b.crc)
-	if _, err := b.W.Write(ct); err != nil {
-		return err
-	}
-	return nil
-}
-
-// WriteRowsHeader 写入binlog 行数据头
-func (b *BinlogWriter) WriteRowsHeader(flag int, t replication.EventType) error {
-	h := b.RowsHeader
-
-	nh := make([]byte, len(h.Header))
-	copy(nh, h.Header)
-
-	// bd.DeleteRowsHeader.FlagsPos:
-	binary.LittleEndian.PutUint16(nh[h.FlagsPos:], uint16(flag))
-
-	return b.WriteRowsEvent(nh)
-}
-
-// WriteRowsEvent 写binlog 事件 仅仅写入数据 不包括event header
-func (b *BinlogWriter) WriteRowsEvent(data []byte) error {
-	// 写入数据
-	if _, err := b.W.Write(data); err != nil {
-		return err
-	}
-
-	// 计算crc32 值
-	// 是否开启 checksum
-	b.crc = crc32.Update(b.crc, crc32.IEEETable, data)
-	return nil
-}
-
-// WriteBinlogFileHeader 开始写入binlog文件header 魔数
-func (b *BinlogWriter) WriteBinlogFileHeader() error {
-	b.logPos = 4
-	if _, err := b.W.Write(replication.BinLogFileHeader); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (b *BinlogWriter) WriteDDL(ddl []byte) error {
-	b.QueryEvent.Query = ddl
-
-	return b.write(b.QueryEvent, replication.QUERY_EVENT)
-}
-
-// WriteQueryBegin write query being event
-func (b *BinlogWriter) WriteQueryBegin() error {
-	b.QueryEvent.Query = []byte("BEGIN")
-
-	return b.write(b.QueryEvent, replication.QUERY_EVENT)
-}
-
-// WriteQueryCommit write query commit event
-func (b *BinlogWriter) WriteQueryCommit() error {
-	b.XID += 1 // 增加事务号
-
-	b.QueryEvent.Query = []byte("COMMIT")
-
-	return b.write(b.QueryEvent, replication.QUERY_EVENT)
-}
-
-// WriteXIDEvent write innodb xid event
-func (b *BinlogWriter) WriteXIDEvent() error {
-	b.XID += 1 // 增加事务号
-
-	e := &replication.XIDEvent{
-		XID: b.XID,
-	}
-
-	return b.write(e, replication.XID_EVENT)
-}
-
-// WriteRotateEvent write rotate event
-func (b *BinlogWriter) WriteRotateEvent() error {
-	e := &replication.RotateEvent{
+// flushLogs : for write rotate event, close the previous log, open the new log file, write file header, write desc event
+func (b *BinlogWriter) flushLogs(curr uint32) error {
+	// write rotate event
+	r := &replication.RotateEvent{
 		Position:    uint64(b.logPos),
-		NextLogName: b.NextPrefix,
+		NextLogName: []byte(fmt.Sprintf("%d.log", curr)),
 	}
+	bts := r.Encode()
 
-	return b.write(e, replication.ROTATE_EVENT)
-}
+	b.lastHeader.LogPos = b.logPos
+	b.lastHeader.EventSize = uint32(replication.EventHeaderSize) + uint32(len(bts)) + uint32(CRC32Size)
 
-// WriteTableMapEvent write table map event 写入table map event
-func (b *BinlogWriter) WriteTableMapEvent() error {
-	// 计算长度
-	size := len(b.TableMapEvent) + replication.EventHeaderSize
-	if err := b.WriteEventHeader(size, replication.TABLE_MAP_EVENT); err != nil {
+	if err := b.WriteEvent(&DataEvent{
+		Header: b.lastHeader,
+		Data:   bts,
+	}); err != nil {
 		return err
 	}
 
-	// 写入数据
-	if _, err := b.W.Write(b.TableMapEvent); err != nil {
+	// flush zlib writer
+	if b.compress && b.iw != nil {
+		if err := b.iw.(*zlib.Writer).Flush(); err != nil {
+			log.Error("flush zlib writer ", fmt.Sprintf("%s/%s", b.Dir, b.Name), " error")
+		}
+	}
+
+	// close binlog file
+	if err := b.f.Close(); err != nil {
+		// do something if close file error
+		log.Error("close binlog file ", fmt.Sprintf("%s/%s", b.Dir, b.Name), " error")
 		return err
 	}
 
-	// 写入 footer
-	return b.WriteEventFooter()
+	b.Name = fmt.Sprintf("%d.log", curr)
+
+	f, err := inter.CreateFile(fmt.Sprintf("%s/%s", b.Dir, b.Name))
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+	b.reset()
+
+	b.f = f
+
+	if b.compress { // 开启压缩
+		// zlib 压缩数据
+		iw := zlib.NewWriter(f)
+
+		// set writer
+		b.iw = iw
+	}
+
+	// write file header
+	if err := b.writeMagic(); err != nil {
+		log.Error(err)
+		return err
+	}
+
+	// write desc event
+	return b.writeDesc(curr)
 }
 
-// Write DescEvent write format desc event
-func (b *BinlogWriter) WriteDescEvent() error {
-	return b.write(b.FormatDesc, replication.FORMAT_DESCRIPTION_EVENT)
-}
+// WriteEvent common use WriteEvent method {header, body, footer}
+func (b *BinlogWriter) WriteEvent(e *DataEvent) error {
+	if e.Header.EventType == replication.QUERY_EVENT {
+		// ddl take the ddl and promote the transaction number
+		b.xid ++
+	}
 
-// write common use write method {header, body, footer}
-func (b *BinlogWriter) write(e replication.EncodeEvent, t replication.EventType) error {
-	// 數據內容
-	bt := e.Encode()
+	// reset crc32 value
+	b.crc = 0
 
-	// write event header
-	size := len(bt) + replication.EventHeaderSize
-	b.WriteEventHeader(size, t)
+	// WriteEvent event header:
+	size := replication.EventHeaderSize + len(e.Data) + CRC32Size
+
+	// calculate binlog position
+	e.Header.LogPos = b.logPos
+	ht := e.Header.Encode()
+	b.crc = crc32.ChecksumIEEE(ht)
+
+	// write header
+	if _, err := b.write(ht); err != nil {
+		return err
+	}
+
+	// set binlog offset
+	b.logPos += uint32(size)
 
 	// write data
-	if _, err := b.W.Write(bt); err != nil {
+	if _, err := b.write(e.Data); err != nil {
 		return err
 	}
 
-	// calculate crc32
-	b.crc = crc32.Update(b.crc, crc32.IEEETable, bt)
+	// calculate crc32  write crc32
+	b.crc = crc32.Update(b.crc, crc32.IEEETable, e.Data)
 
-	// write event footer
-	return b.WriteEventFooter()
+	ct := make([]byte, CRC32Size)
+	binary.LittleEndian.PutUint32(ct, b.crc)
+	if _, err := b.write(ct); err != nil {
+		return err
+	}
+
+	// using the last header
+	b.lastHeader = e.Header
+
+	return nil
+}
+
+// commit write commit event
+func (b *BinlogWriter) Commit(h *replication.EventHeader) error {
+	b.crc = 0
+
+	// commit event
+	c := replication.XIDEvent{
+		XID: b.xid,
+	}
+	cts := c.Encode()
+
+	// log position
+	h.LogPos = b.logPos
+
+	// event header size
+	s := len(cts) + replication.EventHeaderSize + CRC32Size
+	h.EventSize = uint32(s)
+
+	// save new log position
+	b.logPos += uint32(s)
+
+	// header
+	header := h.Encode()
+	b.crc = crc32.ChecksumIEEE(header)
+
+	// write header
+	if _, err := b.write(header); err != nil {
+		return err
+	}
+
+	// write commit event
+	if _, err := b.write(cts); err != nil {
+		return err
+	}
+
+	// write crc32
+	b.crc = crc32.Update(b.crc, crc32.IEEETable, cts)
+
+	ct := make([]byte, CRC32Size)
+	binary.LittleEndian.PutUint32(ct, b.crc)
+	if _, err := b.write(ct); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// writeMagic write magic-number, desc event
+func (b *BinlogWriter) writeMagic() error {
+	b.logPos = 4
+	if _, err := b.write(replication.BinLogFileHeader); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (b *BinlogWriter) writeDesc(curr uint32) error {
+	// update timestamp
+	b.Desc.Header.Timestamp = curr
+	return b.WriteEvent(b.Desc)
+}
+
+// CheckFlush check binlog file whether is full then flush logs for writer
+func (b *BinlogWriter) CheckFlush(s int, curr uint32) error {
+	if b.logPos+uint32(s) < inter.FileLimitSize {
+		return nil
+	}
+
+	// have to flush logs
+	if err := b.flushLogs(curr); err != nil {
+		log.Error(err)
+		return err
+	}
+
+	return nil
+}
+
+// WriteBytes write bytes in case of compress
+func (b *BinlogWriter) write(bt []byte) (int, error) {
+	if len(bt) == 0 {
+		return 0, nil
+	}
+
+	if b.compress {
+		return b.iw.Write(bt)
+	}
+
+	return b.f.Write(bt)
 }

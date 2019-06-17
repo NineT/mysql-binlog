@@ -10,14 +10,14 @@ import (
 
 // MySQLConfig configuration connect to mysql
 type MySQLConfig struct {
-	Host       string  // Host MySQL host 信息
-	IP         string  // IP host對應的ip信息
-	Port       int     // Port 端口信息
-	Db         string  // Db 数据库名
-	User       string  // User 用户名
-	Password   string  // Password 链接MySQL 密码
-	Conn       *sql.DB // Conn MySQL 链接
-	Tx         *sql.Tx // transaction
+	Host     string  // Host MySQL host 信息
+	IP       string  // IP host對應的ip信息
+	Port     int     // Port 端口信息
+	Db       string  // Db 数据库名
+	User     string  // User 用户名
+	Password string  // Password 链接MySQL 密码
+	Conn     *sql.DB // Conn MySQL 链接
+	Tx       *sql.Tx // transaction
 }
 
 // BinlogPosition binlog position
@@ -31,6 +31,7 @@ type BinlogPosition struct {
 	Timestamp  int64         // Timestamp 结束时间
 	Status     string        // Status 状态
 }
+
 
 func (p *BinlogPosition) Copy() *BinlogPosition {
 	b := &BinlogPosition{

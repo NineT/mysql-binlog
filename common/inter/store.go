@@ -8,7 +8,7 @@ import "io"
 
 // IFile 存储接口
 type IFile interface {
-	//Write(p []byte) (n int, err error) // 写数据
+	//WriteEvent(p []byte) (n int, err error) // 写数据
 	//Close() error                      // 关闭写入
 	io.Writer
 	io.Reader
@@ -18,7 +18,7 @@ type IFile interface {
 // IStorageClient 存储客户端接口
 type IClient interface {
 	CreateFile(path, fileName string) (IFile, error)                  // CreateFile 创建文件 创建文件
-	OpenFile(f string) (IFile, error)                                  // OpenFile
+	OpenFile(f string) (IFile, error)                                  // CreateFile
 	CTarFiles(path string, fileType FileType, start, end int64) error // CTarFiles 打包文件 tar -cf
 	XTarFiles(tf string) ([]IFile, error)                             // XTarFiles 解压文件 tar -xf
 }

@@ -2,8 +2,11 @@ package client
 
 import (
 	"archive/tar"
+	"bufio"
 	"compress/zlib"
+	"encoding/json"
 	"fmt"
+	"github.com/mysql-binlog/common/db"
 	"io"
 	"io/ioutil"
 	"os"
@@ -16,6 +19,11 @@ import (
 
 	"github.com/mysql-binlog/common/final"
 	"github.com/mysql-binlog/common/inter"
+)
+
+const (
+	// BinlogOffset file name
+	BinlogIndexFile = "bin.index"
 )
 
 // CFSClient  cfs客户端
@@ -422,4 +430,40 @@ func (s *CFSClient) PublicPath() *inter.FileName {
 		Path: s.Path,
 		Name: inter.Public,
 	}
+}
+
+// ReadLastOffset
+func (s *CFSClient) ReadLastOffset() (*db.BinlogOffset, error) {
+	f, err := os.Open(s.Path + BinlogIndexFile)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	rd := bufio.NewReader(f)
+	last := ""
+	for {
+		line, err := rd.ReadString('\n') //以'\n'为结束符读入一行
+
+		if err != nil || io.EOF == err {
+			if line == "" {
+				break
+			}
+		}
+		last = line
+	}
+
+	if last == "" {
+		// last is empty so no error
+		log.Warn("no offset exist on cfs directory")
+		return nil, nil
+	}
+
+	off := &db.BinlogOffset{}
+	if err := json.Unmarshal([]byte(last), off); err != nil {
+		log.Warn("data format no right , ", last)
+		return nil, err
+	}
+
+	return off, nil
 }

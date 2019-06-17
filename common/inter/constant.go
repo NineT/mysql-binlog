@@ -2,6 +2,7 @@ package inter
 
 import (
 	"fmt"
+	"git.jd.com/binlake/common/inter"
 	"os"
 	"strconv"
 	"strings"
@@ -54,7 +55,7 @@ var Second = uint32(1)
 var FileMode = os.FileMode(0666)
 
 type FileName struct {
-	Path   string     `json:"path"`   // Path 文件路径
+	Path   string     `json:"path"`   // Dir 文件路径
 	Name   string     `json:"name"`   // Name 文件标准名称		example : sec_1551661307_1551661308.log
 	Prefix FileType   `json:"prefix"` // Prefix file type {sec, min, hour, day}
 	Suffix FileSuffix `json:"suffix"` // suffix 后缀名
@@ -65,6 +66,9 @@ type FileNames []*FileName
 const (
 	// LogEventSuppressUseF use db flag
 	LogEventSuppressUseF = uint16(0x8)
+
+	// FileLimitSize binlog file size 1g
+	FileLimitSize = uint32(1024) * uint32(1024) * uint32(1024)
 
 	// DAY 日期字符串常量
 	DAY FileType = "day"
@@ -182,4 +186,20 @@ func StdPath(p string) string {
 		return fmt.Sprintf("%s/", p)
 	}
 	return p
+}
+
+// create file and make directory for tale
+func CreateFile(f string) (*os.File, error) {
+	dir := f[:strings.LastIndex(f, "/")]
+	// make directory for path
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		os.MkdirAll(dir, os.ModePerm)
+	}
+
+	file, err := os.OpenFile(f, os.O_CREATE|os.O_RDWR|os.O_TRUNC, inter.FileMode)
+	if err != nil {
+		return nil, err
+	}
+
+	return file, nil
 }
