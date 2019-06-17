@@ -235,6 +235,11 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) bool {
 			// write xid commit event to each table
 			mc.tableHandlers[t].EventChan <- blog.Binlog2Data(ev, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, false)
 		}
+
+		mc.offsets.PushBack(&Offset{
+			gtid:    mc.latestUUID,
+			counter: len(mc.relatedTables),
+		})
 	case replication.BEGIN_LOAD_QUERY_EVENT:
 	case replication.EXECUTE_LOAD_QUERY_EVENT:
 	case replication.TABLE_MAP_EVENT:
