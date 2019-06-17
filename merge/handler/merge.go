@@ -413,7 +413,7 @@ func (mc *MergeConfig) writeLogHeader() error {
 	bw := &blog.BinlogWriter{
 		EventHeader: mc.header.Copy(),
 		FormatDesc:  mc.desc,
-		W:           mc.Writer,
+		f:           mc.Writer,
 	}
 
 	defer bw.Clear()
