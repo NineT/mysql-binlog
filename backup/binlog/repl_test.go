@@ -243,11 +243,8 @@ func TestParseBinlog(t *testing.T) {
 	}
 
 	for {
-		select {
-		default:
-			if err := parser.ParseFile("/home/pengan/day_1544780980_1544782323.log", int64(4), handler); err != nil {
-				return
-			}
+		if err := parser.ParseFile("/home/pengan/day_1544780980_1544782323.log", int64(4), handler); err != nil {
+			return
 		}
 	}
 }

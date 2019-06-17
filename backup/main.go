@@ -2,16 +2,15 @@ package main
 
 import (
 	"context"
-	_ "crypto/md5"
 	"flag"
 	"fmt"
-	"github.com/zssky/log"
-	"net"
 	"os"
 	"os/signal"
 	"runtime/pprof"
-	"strings"
 	"sync"
+
+	"github.com/juju/errors"
+	"github.com/zssky/log"
 
 	"github.com/mysql-binlog/common/client"
 	"github.com/mysql-binlog/common/db"
@@ -24,38 +23,28 @@ import (
 
 /**
 @author: pengan
-作用： 合并binlog 并生成binlog
+作用： 合并binlog 并生成binlog 备份不参与合并数据
 */
 
-var mc *handler.MergeConfig
-
 var (
+	// merge config
+	mc *handler.MergeConfig
+
 	// dump information
 	dumpHost   = flag.String("dumphost", "127.0.0.1", "dump MySQL 域名")
 	dumpPort   = flag.Int("dumpport", 3306, "dump MySQL 端口")
 	dumpUser   = flag.String("dumpuser", "root", "dump MySQL 用户名")
 	dumpPasswd = flag.String("dumppasswd", "secret", "dump MySQL 密码")
-	dumpMode   = flag.String("dumpmode", "remote", "dump 模式 {local, remote}")
 	stopTime   = flag.String("stoptime", "2999-12-30 23:59:59", "dump 结束时间")
 
-	// meta information
-	metaHost   = flag.String("metahost", "127.0.0.1", "元数据库域名")
-	metaPort   = flag.Int("metaport", 3306, "元数据库端口")
-	metaUser   = flag.String("metauser", "root", "元数据库用户名")
-	metaPasswd = flag.String("metapasswd", "secret", "元数据库密码")
-	metaDb     = flag.String("metadb", "binlog_backup", "元数据库名")
-
-	// temporary path for level db data
-	tmpPath = flag.String("tmppath", "/export/backup/", "临时文件存储路径")
+	// clusterID 用于记录是属于那个集群的binlog 用来唯一标识 文件路径
+	clusterID = flag.Int("clusterid", 0, "集群id")
 
 	// cfs storage path for binlog data
 	cfsPath = flag.String("cfspath", "/export/backup/", "cfs 数据存储目录")
 
 	// compress 是否压缩数据
 	compress = flag.Bool("compress", true, "是否压缩数据")
-
-	// backupperiod 备份周期 : day, hour, minute, second
-	period = flag.String("period", "sec", "备份周期 {day, hour, min, sec}")
 
 	// log level
 	level = flag.String("level", "debug", "日志级别log level {debug/info/warn/error}")
@@ -66,19 +55,7 @@ func initiate() {
 	// print input parameter
 	log.Info("dump host ", *dumpHost, ", dump port ", *dumpPort, ", dump user ", *dumpUser, ", dump password *****", ", dump stop time ", *stopTime)
 
-	log.Info("meta host ", *metaHost, ", meta port ", *metaPort, ", meta user ", *metaUser, ", meta password *****", ", meta db ", *metaDb)
-
-	log.Info("temporary path ", *tmpPath, ", log level ", *level)
-
 	finalTime := inter.ParseTime(*stopTime)
-
-	meta := &db.MetaConf{
-		Host:     *metaHost,
-		Port:     *metaPort,
-		Db:       *metaDb,
-		User:     *metaUser,
-		Password: *metaPasswd,
-	}
 
 	dump := &db.MetaConf{
 		Host:     *dumpHost,
@@ -88,46 +65,49 @@ func initiate() {
 		Password: *dumpPasswd,
 	}
 
-	startPos, err := meta.GetPosition(*dumpHost)
+	if has, _ := dump.HasGTID(); !has {
+		log.Fatal(errors.New("only support gtid opened MySQL instances"))
+	}
+
+	// data storage path clusterID
+	sp := fmt.Sprintf("%s%d", inter.StdPath(*cfsPath), *clusterID)
+
+	// 创建目录
+	inter.CreateLocalDir(sp)
+
+	// cfs client
+	c := &client.CFSClient{
+		Path:     inter.StdPath(sp),
+		Compress: *compress,
+	}
+
+	// offset
+	o, err := c.ReadLastOffset()
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Info("start binlog position ", startPos)
 
-	dumpMode := selectDumpMode(*dumpHost, dump)
-
-	// data temporary path
-	dtp := fmt.Sprintf("%s%s", inter.StdPath(*tmpPath), inter.DataPath)
-
-	// data snapshot path
-	dsp := fmt.Sprintf("%s%s", inter.StdPath(*tmpPath), inter.SnapPath)
-
-	// data storage path
-	sp := fmt.Sprintf("%s%s", inter.StdPath(*cfsPath), inter.StorePath)
-
-	// 创建目录
-	inter.CreateLocalDir(dtp)
-
-	inter.CreateLocalDir(dsp)
+	// get master status
+	var off *db.BinlogOffset
+	if o == nil {
+		pos, err := dump.MasterStatus()
+		if err != nil || pos.GTIDSet == nil {
+			log.Fatal(err, " or gtid is empty")
+		}
+		log.Info("start binlog position ", pos)
+		off = pos
+	} else {
+		// or take the newly offset from file
+		off = o
+	}
 
 	// init merge config
 	mc = &handler.MergeConfig{
-		FinalTime:    finalTime,
-		TempPath:     inter.StdPath(dtp),
-		SnapshotPath: inter.StdPath(dsp),
-		Client: &client.CFSClient{
-			Path:     inter.StdPath(sp),
-			Compress: *compress,
-		},
-		Period:        inter.FileType(*period),
-		DumpMode:      dumpMode,
-		StartPosition: startPos, // 共享同一个地址 后续更新采用同一地址
-
-		// initiate >= start
-		LatestPosition:  startPos,
+		FinalTime:       finalTime,
+		SnapshotPath:    inter.StdPath(sp),
+		StartPos:        off,
 		TableHandlers:   make(map[string]*binlog.TableEventHandler),
 		DumpMySQLConfig: dump,
-		MetaMySQLConfig: meta,
 		Wgs:             make(map[string]*sync.WaitGroup),
 	}
 
@@ -141,49 +121,6 @@ func initiate() {
 	}
 
 	mc.After = am
-}
-
-// selectDumpMode 判断dump的模式remote / local
-func selectDumpMode(domain string, backup *db.MetaConf) handler.DumpMode {
-	if strings.EqualFold(*dumpMode, "remote") {
-		// dumpmode == remote
-		return handler.DumpModeRemote
-	}
-
-	// 如果域名对应的ip 是本机的ip 则采用本地备份
-	ns, err := net.LookupHost(domain)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// 内网当中一个域名只对应一个ip
-	var ip2Domain string
-	for _, n := range ns {
-		ip2Domain = n
-	}
-	backup.IP = ip2Domain // 设置dump 域名对应的ip
-
-	netIps := make(map[string]string)
-
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for _, addr := range addrs {
-		// 检查ip地址判断是否回环地址
-		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
-			if ipNet.IP.To4() != nil {
-				netIps[ipNet.IP.String()] = ipNet.IP.String()
-			}
-		}
-	}
-
-	if _, ok := netIps[ip2Domain]; ok {
-		return handler.DumpModeLocal
-	}
-
-	return handler.DumpModeRemote
 }
 
 // logger 初始化logger
@@ -204,7 +141,9 @@ func main() {
 	initiate()
 
 	f, _ := os.Create("/tmp/cpu.prof")
-	pprof.StartCPUProfile(f)
+	if err := pprof.StartCPUProfile(f); err != nil {
+		log.Fatal(err)
+	}
 
 	c := make(chan os.Signal)
 	go func() {
@@ -212,7 +151,9 @@ func main() {
 		s := <-c
 		pprof.StopCPUProfile()
 
-		f.Close()
+		if err := f.Close(); err != nil {
+			log.Fatal(err)
+		}
 
 		fmt.Println("退出信号", s)
 		os.Exit(0)
