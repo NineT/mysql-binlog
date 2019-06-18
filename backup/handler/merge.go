@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"container/list"
 	"fmt"
+	"github.com/mysql-binlog/common/meta"
 	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
 	"github.com/mysql-binlog/siddontang/go-mysql/replication"
 	"github.com/satori/go.uuid"
@@ -20,20 +21,13 @@ import (
 	"github.com/mysql-binlog/backup/binlog"
 )
 
-// Offset  including gtid, counter
-type Offset struct {
-	gtid    []byte // gtid
-	counter int    // counter
-	header  bool   // header flag
-}
-
 // MergeConfig merge conf
 type MergeConfig struct {
 	Compress        bool                                 // compress
 	SnapshotPath    string                               // 数据 kv 存储路径 快照存储路径
 	After           *final.After                         // After math for merge
-	StartPos        *cdb.BinlogOffset                    // start binlog offset
 	DumpMySQLConfig *cdb.MetaConf                        // DumpMySQLConfig dump mysql 的操作
+	binFile         string                               // binlog file
 	lastEventTime   uint32                               // last event time:
 	lastFlags       uint16                               // last flag
 	table           string                               // 注意table是传值 不是引用 临时变量 存储事件对应的表名
@@ -48,10 +42,10 @@ type MergeConfig struct {
 }
 
 // NewMergeConfig new merge config
-func NewMergeConfig(path string, off *cdb.BinlogOffset, dump *cdb.MetaConf) *MergeConfig {
+func NewMergeConfig(compress bool, path string, off *meta.Offset, dump *cdb.MetaConf) *MergeConfig {
 	m := &MergeConfig{
+		Compress:        compress,
 		SnapshotPath:    inter.StdPath(path),
-		StartPos:        off,
 		DumpMySQLConfig: dump,
 		relatedTables:   make(map[string]string),
 		tableHandlers:   make(map[string]*binlog.TableEventHandler),
@@ -60,10 +54,10 @@ func NewMergeConfig(path string, off *cdb.BinlogOffset, dump *cdb.MetaConf) *Mer
 
 	// header flag take this then take the newly offset
 	m.offsets = list.New()
-	m.offsets.PushBack(&Offset{
-		gtid:    []byte(off.GTID),
-		counter: 0,
-		header:  true,
+	m.offsets.PushBack(&meta.Offset{
+		OriGtid: off.OriGtid,
+		Counter: 0,
+		Header:  true,
 	})
 
 	return m
@@ -88,7 +82,12 @@ func (mc *MergeConfig) Start() {
 	var streamer *replication.BinlogStreamer
 	var err error
 
-	if streamer, err = syncer.StartSyncGTID(mc.StartPos.GTIDSet); err != nil {
+	gs, err := mysql.ParseMysqlGTIDSet(string(mc.offsets.Front().Value.(*meta.Offset).OriGtid))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if streamer, err = syncer.StartSyncGTID(gs); err != nil {
 		log.Error("error sync data using gtid ", err)
 		panic(err)
 	}
@@ -103,10 +102,10 @@ func (mc *MergeConfig) Start() {
 			// take the priority to clear offset
 			var tmp *list.Element
 			for e := mc.offsets.Front(); e != nil; e = e.Next() {
-				o := e.Value.(*Offset)
-				if bytes.EqualFold(o.gtid, g) {
-					o.counter --
-					if o.counter == 0 {
+				o := e.Value.(*meta.Offset)
+				if bytes.EqualFold(o.OriGtid, g) {
+					o.Counter --
+					if o.Counter == 0 {
 						// gtid event flush to binlog file
 						tmp = e
 					}
@@ -117,22 +116,22 @@ func (mc *MergeConfig) Start() {
 			if tmp != nil {
 				// remove element from list and header will never be null
 				pre := tmp.Prev()
-				o := mc.offsets.Remove(tmp).(*Offset)
+				o := mc.offsets.Remove(tmp).(*meta.Offset)
 				log.Debugf("remove gtid %v", o)
 
-				pg, err := mysql.ParseMysqlGTIDSet(string(pre.Value.(*Offset).gtid))
+				pg, err := mysql.ParseMysqlGTIDSet(string(pre.Value.(*meta.Offset).OriGtid))
 				if err != nil {
 					log.Error("parse previous gtid error ", err)
 					panic(err)
 				}
 
-				if err := pg.Update(string(o.gtid)); err != nil {
-					log.Error("update gtid error previous gtid:", string(pre.Value.(*Offset).gtid), ", next gtid:", string(o.gtid), ", error ", err)
+				if err := pg.Update(string(o.OriGtid)); err != nil {
+					log.Error("update gtid error previous gtid:", string(pre.Value.(*meta.Offset).OriGtid), ", next gtid:", string(o.OriGtid), ", error ", err)
 					panic(err)
 				}
 
 				// reset gtid
-				pre.Value.(*Offset).gtid = []byte(pg.String())
+				pre.Value.(*meta.Offset).MergedGtid = []byte(pg.String())
 			}
 		default:
 			// check write is block make sure that write cannot hang
@@ -202,10 +201,13 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 					}
 
 					// append offset
-					mc.offsets.PushBack(&Offset{
-						gtid:    mc.latestUUID,
-						counter: len(tbs),
-						header:  false,
+					mc.offsets.PushBack(&meta.Offset{
+						OriGtid: mc.latestUUID,
+						Counter: len(tbs),
+						Header:  false,
+						Time:    ev.Header.Timestamp,
+						BinFile: mc.binFile,
+						BinPos:  ev.Header.LogPos,
 					})
 				} else {
 					// common packet with ddl write to each table
@@ -216,14 +218,16 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 
 						// ddl event
 						h.EventChan <- blog.Binlog2Data(ev, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, true)
-
 					}
 
 					// append offset
-					mc.offsets.PushBack(&Offset{
-						gtid:    mc.latestUUID,
-						counter: len(mc.tableHandlers),
-						header:  false,
+					mc.offsets.PushBack(&meta.Offset{
+						OriGtid: mc.latestUUID,
+						Counter: len(mc.tableHandlers),
+						Header:  false,
+						Time:    ev.Header.Timestamp,
+						BinFile: mc.binFile,
+						BinPos:  ev.Header.LogPos,
 					})
 				}
 			}
@@ -231,6 +235,9 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 	case replication.STOP_EVENT:
 	case replication.ROTATE_EVENT:
 		re, _ := ev.Event.(*replication.RotateEvent)
+
+		// save binlog file
+		mc.binFile = string(re.NextLogName)
 		log.Debug("next binlog file name " + string(re.NextLogName))
 
 	case replication.INTVAR_EVENT:
@@ -251,10 +258,13 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 			mc.tableHandlers[t].EventChan <- blog.Binlog2Data(ev, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, false)
 		}
 
-		mc.offsets.PushBack(&Offset{
-			gtid:    mc.latestUUID,
-			counter: len(mc.relatedTables),
-			header:  false,
+		mc.offsets.PushBack(&meta.Offset{
+			OriGtid: mc.latestUUID,
+			Counter: len(mc.relatedTables),
+			Header:  false,
+			Time:    ev.Header.Timestamp,
+			BinFile: mc.binFile,
+			BinPos:  ev.Header.LogPos,
 		})
 	case replication.BEGIN_LOAD_QUERY_EVENT:
 	case replication.EXECUTE_LOAD_QUERY_EVENT:

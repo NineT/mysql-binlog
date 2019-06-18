@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"github.com/mysql-binlog/common/meta"
 	"strconv"
 	"strings"
 
@@ -393,7 +394,7 @@ func (c *MetaConf) HasGTID() (bool, error) {
 }
 
 // Master status
-func (c *MetaConf) MasterStatus() (*BinlogOffset, error) {
+func (c *MetaConf) MasterStatus() (*meta.Offset, error) {
 	c.RefreshConnection()
 
 	rst, err := c.Conn.Query("show master status")
@@ -403,10 +404,10 @@ func (c *MetaConf) MasterStatus() (*BinlogOffset, error) {
 	}
 	defer rst.Close()
 
-	var mode, val, doDB, igDB, gtid string
+	var f, pos, doDB, igDB, gtid string
 
 	for rst.Next() {
-		rst.Scan(&mode, &val, &doDB, &igDB, &gtid)
+		rst.Scan(&f, &pos, &doDB, &igDB, &gtid)
 	}
 
 	g, err := mysql.ParseMysqlGTIDSet(gtid)
@@ -414,10 +415,17 @@ func (c *MetaConf) MasterStatus() (*BinlogOffset, error) {
 		return nil, err
 	}
 
-	pos := &BinlogOffset{
-		GTID:    gtid,
-		GTIDSet: g,
+	p, err := strconv.Atoi(pos)
+	if err != nil {
+		log.Errorf("show master status error for binlog position %v", err)
+		return nil, err
 	}
 
-	return pos, nil
+	off := &meta.Offset{
+		OriGtid: []byte(g.String()),
+		BinFile: f,
+		BinPos:  uint32(p),
+	}
+
+	return off, nil
 }

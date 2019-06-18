@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/juju/errors"
+	"github.com/mysql-binlog/common/meta"
 	"github.com/zssky/log"
 	"os"
 	"os/signal"
@@ -39,6 +40,9 @@ var (
 	// cfs storage path for binlog data
 	cfsPath = flag.String("cfspath", "/export/backup/", "cfs 数据存储目录")
 
+	// etcd url
+	etcd = flag.String("etcd", "http://localhost:2379", "etcd 请求地址")
+
 	// compress 是否压缩数据
 	compress = flag.Bool("compress", true, "是否压缩数据")
 
@@ -69,26 +73,25 @@ func initiate() {
 	// 创建目录
 	inter.CreateLocalDir(sp)
 
-	// cfs client
-	c := &client.CFSClient{
-		Path:     inter.StdPath(sp),
-		Compress: *compress,
+	etc, err := client.NewEtcdMeta(*etcd, "v1")
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	// offset
-	o, err := c.ReadLastOffset()
+	// newly offset
+	o, err := etc.Read(*clusterID)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// get master status
-	var off *db.BinlogOffset
+	var off *meta.Offset
 	if o == nil {
 		pos, err := dump.MasterStatus()
-		if err != nil || pos.GTIDSet == nil {
+		if err != nil || pos.OriGtid == nil {
 			log.Fatal(err, " or gtid is empty")
 		}
-		log.Info("start binlog position ", pos)
+		log.Info("start binlog position ", string(pos.OriGtid))
 		off = pos
 	} else {
 		// or take the newly offset from file
@@ -96,7 +99,7 @@ func initiate() {
 	}
 
 	// init merge config
-	mc = handler.NewMergeConfig(sp, off, dump)
+	mc = handler.NewMergeConfig(*compress, sp, off, dump)
 
 	// init after math
 	errs := make(chan interface{}, 4)
