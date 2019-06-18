@@ -32,7 +32,6 @@ var (
 	dumpPort   = flag.Int("dumpport", 3306, "dump MySQL 端口")
 	dumpUser   = flag.String("dumpuser", "root", "dump MySQL 用户名")
 	dumpPasswd = flag.String("dumppasswd", "secret", "dump MySQL 密码")
-	stopTime   = flag.String("stoptime", "2999-12-30 23:59:59", "dump 结束时间")
 
 	// clusterID 用于记录是属于那个集群的binlog 用来唯一标识 文件路径
 	clusterID = flag.Int("clusterid", 0, "集群id")
@@ -50,9 +49,7 @@ var (
 // 初始化
 func initiate() {
 	// print input parameter
-	log.Info("dump host ", *dumpHost, ", dump port ", *dumpPort, ", dump user ", *dumpUser, ", dump password *****", ", dump stop time ", *stopTime)
-
-	finalTime := inter.ParseTime(*stopTime)
+	log.Info("dump host ", *dumpHost, ", dump port ", *dumpPort, ", dump user ", *dumpUser, ", dump password *****")
 
 	dump := &db.MetaConf{
 		Host:     *dumpHost,
@@ -99,7 +96,7 @@ func initiate() {
 	}
 
 	// init merge config
-	mc = handler.NewMergeConfig(finalTime, sp, off, dump)
+	mc = handler.NewMergeConfig(sp, off, dump)
 
 	// init after math
 	errs := make(chan interface{}, 4)

@@ -123,6 +123,7 @@ func (b *BinlogWriter) reset() {
 
 // flushLogs : for write rotate event, close the previous log, open the new log file, write file header, write desc event
 func (b *BinlogWriter) flushLogs(curr uint32) error {
+	log.Debug("flush logs")
 	// write rotate event
 	r := &replication.RotateEvent{
 		Position:    uint64(b.logPos),
@@ -144,6 +145,7 @@ func (b *BinlogWriter) flushLogs(curr uint32) error {
 	if b.compress && b.iw != nil {
 		if err := b.iw.(*zlib.Writer).Flush(); err != nil {
 			log.Error("flush zlib writer ", fmt.Sprintf("%s/%s", b.Dir, b.Name), " error")
+			return err
 		}
 	}
 
@@ -225,52 +227,6 @@ func (b *BinlogWriter) WriteEvent(e *DataEvent) error {
 
 	// using the last header
 	b.lastHeader = e.Header
-
-	return nil
-}
-
-// commit write commit event
-func (b *BinlogWriter) Commit(h *replication.EventHeader) error {
-	b.crc = 0
-
-	// commit event
-	c := replication.XIDEvent{
-		XID: b.xid,
-	}
-	cts := c.Encode()
-
-	// log position
-	h.LogPos = b.logPos
-
-	// event header size
-	s := len(cts) + replication.EventHeaderSize + CRC32Size
-	h.EventSize = uint32(s)
-
-	// save new log position
-	b.logPos += uint32(s)
-
-	// header
-	header := h.Encode()
-	b.crc = crc32.ChecksumIEEE(header)
-
-	// write header
-	if _, err := b.write(header); err != nil {
-		return err
-	}
-
-	// write commit event
-	if _, err := b.write(cts); err != nil {
-		return err
-	}
-
-	// write crc32
-	b.crc = crc32.Update(b.crc, crc32.IEEETable, cts)
-
-	ct := make([]byte, CRC32Size)
-	binary.LittleEndian.PutUint32(ct, b.crc)
-	if _, err := b.write(ct); err != nil {
-		return err
-	}
 
 	return nil
 }

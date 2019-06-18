@@ -1,9 +1,8 @@
 package binlog
 
 import (
+	"github.com/mysql-binlog/common/inter"
 	"github.com/mysql-binlog/siddontang/go-mysql/replication"
-	"sync"
-
 	"github.com/zssky/log"
 
 	"github.com/mysql-binlog/common/final"
@@ -18,13 +17,11 @@ type TableEventHandler struct {
 	Stamp     int64                // timestamp for binlog file name eg. 1020040204.log
 	EventChan chan *blog.DataEvent // transaction channel 事件队列
 	GtidChan  chan []byte          // gtid chan using
-	Wg        *sync.WaitGroup      // Master wait group
 	Writer    *blog.BinlogWriter   // binlog writer
 }
 
 // NewEventHandler
 func NewEventHandler(path, table string, curr uint32, compress bool, desc *blog.DataEvent, after *final.After, gch chan []byte) (*TableEventHandler, error) {
-	wg := &sync.WaitGroup{}
 
 	w, err := blog.NewBinlogWriter(path, table, curr, compress, desc)
 	if err != nil {
@@ -32,18 +29,15 @@ func NewEventHandler(path, table string, curr uint32, compress bool, desc *blog.
 		return nil, err
 	}
 
-	evh := &TableEventHandler{
+	return &TableEventHandler{
 		Table: table,
 		After: after,
 		Stamp: int64(curr),
 		// channel init
-		EventChan: make(chan *blog.DataEvent, 64),
+		EventChan: make(chan *blog.DataEvent, inter.BufferSize),
 		GtidChan:  gch,
-		Wg:        wg,
 		Writer:    w,
-	}
-
-	return evh, nil
+	}, nil
 }
 
 // HandleLogEvent write log event data into k-v storage
@@ -75,9 +69,7 @@ func (h *TableEventHandler) HandleLogEvent() {
 
 // handle handle binlog event into binlog file
 func (h *TableEventHandler) handle(t *blog.DataEvent) error {
-	// wg done
-	defer h.Wg.Done()
-
+	log.Debug("handle")
 	switch t.Header.EventType {
 	case replication.XID_EVENT:
 		// write gtid

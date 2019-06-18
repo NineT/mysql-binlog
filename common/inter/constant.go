@@ -70,6 +70,9 @@ const (
 	// FileLimitSize binlog file size 1g
 	FileLimitSize = uint32(1024) * uint32(1024) * uint32(1024)
 
+	// BufferSize channel buffer size
+	BufferSize = 64
+
 	// DAY 日期字符串常量
 	DAY FileType = "day"
 

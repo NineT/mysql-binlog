@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"container/list"
 	"fmt"
+	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
 	"github.com/mysql-binlog/siddontang/go-mysql/replication"
 	"github.com/satori/go.uuid"
 	"github.com/zssky/log"
 	"strings"
-	"sync"
+	"time"
 
 	cdb "github.com/mysql-binlog/common/db"
 	"github.com/mysql-binlog/common/final"
@@ -23,18 +24,16 @@ import (
 type Offset struct {
 	gtid    []byte // gtid
 	counter int    // counter
+	header  bool   // header flag
 }
 
 // MergeConfig merge conf
 type MergeConfig struct {
-	FinalTime       int64                                // FinalTime 终止时间 表示dump到此结束不在继续dump
 	Compress        bool                                 // compress
 	SnapshotPath    string                               // 数据 kv 存储路径 快照存储路径
 	After           *final.After                         // After math for merge
 	StartPos        *cdb.BinlogOffset                    // start binlog offset
 	DumpMySQLConfig *cdb.MetaConf                        // DumpMySQLConfig dump mysql 的操作
-	Wgs             map[string]*sync.WaitGroup           // Wgs wait group 用来做携程之间的等待操作
-	startTime       uint32                               // startTime  : first binlog time stamp
 	lastEventTime   uint32                               // last event time:
 	lastFlags       uint16                               // last flag
 	table           string                               // 注意table是传值 不是引用 临时变量 存储事件对应的表名
@@ -42,7 +41,6 @@ type MergeConfig struct {
 	latestBegin     *blog.DataEvent                      // begin for latest
 	latestUUID      []byte                               // latest uuid
 	latestGtid      *blog.DataEvent                      // gtid for latest
-	latestTableMap  *blog.DataEvent                      // table map event
 	relatedTables   map[string]string                    // relatedTables gtid related tables
 	tableHandlers   map[string]*binlog.TableEventHandler // tableHandlers 每张表的操作
 	gc              chan []byte                          // gtid channel using for gtid channels
@@ -50,18 +48,25 @@ type MergeConfig struct {
 }
 
 // NewMergeConfig new merge config
-func NewMergeConfig(ts int64, path string, off *cdb.BinlogOffset, dump *cdb.MetaConf) *MergeConfig {
-	return &MergeConfig{
-		FinalTime:       ts,
+func NewMergeConfig(path string, off *cdb.BinlogOffset, dump *cdb.MetaConf) *MergeConfig {
+	m := &MergeConfig{
 		SnapshotPath:    inter.StdPath(path),
 		StartPos:        off,
 		DumpMySQLConfig: dump,
 		relatedTables:   make(map[string]string),
 		tableHandlers:   make(map[string]*binlog.TableEventHandler),
-		Wgs:             make(map[string]*sync.WaitGroup),
-		gc:              make(chan []byte, 64),
-		offsets:         list.New(),
+		gc:              make(chan []byte, inter.BufferSize),
 	}
+
+	// header flag take this then take the newly offset
+	m.offsets = list.New()
+	m.offsets.PushBack(&Offset{
+		gtid:    []byte(off.GTID),
+		counter: 0,
+		header:  true,
+	})
+
+	return m
 }
 
 // Start start merge
@@ -89,8 +94,7 @@ func (mc *MergeConfig) Start() {
 	}
 
 	// true means continue, false means to stop
-	flag := true
-	for flag {
+	for {
 		select {
 		case e := <-mc.After.Errs:
 			// wait for errors
@@ -111,21 +115,40 @@ func (mc *MergeConfig) Start() {
 			}
 
 			if tmp != nil {
-				// remove element from list
+				// remove element from list and header will never be null
+				pre := tmp.Prev()
 				o := mc.offsets.Remove(tmp).(*Offset)
 				log.Debugf("remove gtid %v", o)
-				if err := mc.StartPos.GTIDSet.Update(string(o.gtid)); err != nil {
-					log.Error(err)
+
+				pg, err := mysql.ParseMysqlGTIDSet(string(pre.Value.(*Offset).gtid))
+				if err != nil {
+					log.Error("parse previous gtid error ", err)
 					panic(err)
 				}
+
+				if err := pg.Update(string(o.gtid)); err != nil {
+					log.Error("update gtid error previous gtid:", string(pre.Value.(*Offset).gtid), ", next gtid:", string(o.gtid), ", error ", err)
+					panic(err)
+				}
+
+				// reset gtid
+				pre.Value.(*Offset).gtid = []byte(pg.String())
 			}
 		default:
+			// check write is block make sure that write cannot hang
+			// consider the worst situation for only one channel exists then size(offset) must < inter.BufferSize
+			if mc.offsets.Len() >= inter.BufferSize {
+				log.Warnf("buffer is full for offset size %d >= %d wait for 1.sec for buffer clearing", mc.offsets.Len(), inter.BufferSize)
+				time.Sleep(time.Second * 1)
+				break
+			}
+
 			ev, err := streamer.GetEvent(mc.After.Ctx)
 			if err != nil {
 				log.Error("error handle binlog event ", err)
 				panic(err)
 			}
-			flag = mc.EventHandler(ev)
+			mc.EventHandler(ev)
 		}
 	}
 }
@@ -136,7 +159,7 @@ func (mc *MergeConfig) Close() {
 }
 
 // EventHandler handle event false: arrived the terminal time, true: means continue
-func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) bool {
+func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 	defer func() {
 		if err := recover(); err != nil {
 			// recover error no next time arrive here
@@ -150,16 +173,6 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) bool {
 	}()
 
 	curr := ev.Header.Timestamp
-	if curr != 0 && mc.startTime == 0 {
-		mc.startTime = curr
-	}
-
-	// 大于dump 停止时间
-	if int64(ev.Header.Timestamp)-mc.FinalTime >= 0 {
-		log.Warn("time is arrived %d", mc.FinalTime)
-		// means finished
-		return false
-	}
 
 	//ev.RowHeader.Timestamp
 	switch ev.Header.EventType {
@@ -192,6 +205,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) bool {
 					mc.offsets.PushBack(&Offset{
 						gtid:    mc.latestUUID,
 						counter: len(tbs),
+						header:  false,
 					})
 				} else {
 					// common packet with ddl write to each table
@@ -209,6 +223,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) bool {
 					mc.offsets.PushBack(&Offset{
 						gtid:    mc.latestUUID,
 						counter: len(mc.tableHandlers),
+						header:  false,
 					})
 				}
 			}
@@ -239,6 +254,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) bool {
 		mc.offsets.PushBack(&Offset{
 			gtid:    mc.latestUUID,
 			counter: len(mc.relatedTables),
+			header:  false,
 		})
 	case replication.BEGIN_LOAD_QUERY_EVENT:
 	case replication.EXECUTE_LOAD_QUERY_EVENT:
@@ -273,11 +289,8 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) bool {
 		replication.UPDATE_ROWS_EVENTv0,
 		replication.UPDATE_ROWS_EVENTv1,
 		replication.UPDATE_ROWS_EVENTv2:
-		h := mc.tableHandlers[mc.table]
-		// add 1
-		h.Wg.Add(1)
-
-		h.EventChan <- blog.Binlog2Data(ev, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, false)
+		// write event into even channel
+		mc.tableHandlers[mc.table].EventChan <- blog.Binlog2Data(ev, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, false)
 
 	case replication.INCIDENT_EVENT:
 	case replication.HEARTBEAT_EVENT:
@@ -303,8 +316,6 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) bool {
 	case replication.PREVIOUS_GTIDS_EVENT:
 	default:
 	}
-
-	return true
 }
 
 // newQueryEvent new query evetnt
@@ -330,7 +341,6 @@ func (mc *MergeConfig) newHandler(curr uint32, table string, gch chan []byte) {
 		panic(err)
 	}
 	mc.tableHandlers[table] = evh
-	mc.Wgs[table] = evh.Wg
 
 	// 事件队列
 	go evh.HandleLogEvent()
