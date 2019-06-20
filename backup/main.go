@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"github.com/juju/errors"
-	"github.com/mysql-binlog/common/meta"
 	"github.com/zssky/log"
 	"os"
 	"os/signal"
@@ -44,7 +43,7 @@ var (
 	etcd = flag.String("etcd", "http://localhost:2379", "etcd 请求地址")
 
 	// compress 是否压缩数据
-	compress = flag.Bool("compress", true, "是否压缩数据")
+	compress = flag.Bool("compress", false, "是否压缩数据")
 
 	// log level
 	level = flag.String("level", "debug", "日志级别log level {debug/info/warn/error}")
@@ -85,7 +84,7 @@ func initiate() {
 	}
 
 	// get master status
-	var off *meta.Offset
+	off := o
 	if o == nil {
 		pos, err := dump.MasterStatus()
 		if err != nil || pos.OriGtid == nil {
@@ -93,9 +92,6 @@ func initiate() {
 		}
 		log.Info("start binlog position ", string(pos.OriGtid))
 		off = pos
-	} else {
-		// or take the newly offset from file
-		off = o
 	}
 
 	// init merge config

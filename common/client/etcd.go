@@ -1,9 +1,12 @@
 package client
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -13,7 +16,7 @@ import (
 	"github.com/mysql-binlog/common/meta"
 )
 
-// EtcdMeta implement meta structure
+// EtcdMeta implement meta structure using compress data
 type EtcdMeta struct {
 	Url     string           // etcd url using domain
 	Version string           // etcd meta version
@@ -49,14 +52,16 @@ func NewEtcdMeta(url, v string) (*EtcdMeta, error) {
 
 // Read read data from etcd meta
 func (m *EtcdMeta) Read(k interface{}) (*meta.Offset, error) {
+	// format key
 	key := fmt.Sprintf("%v", k)
 	if strings.HasPrefix(key, "/") {
 		key = strings.TrimPrefix(key, "/")
 	}
+	key = fmt.Sprintf("%s/%s", m.Version, key)
 
+	// get response
 	kv := clientv3.NewKV(m.client)
-
-	resp, err := kv.Get(context.Background(), fmt.Sprintf("%s/%s", m.Version, key))
+	resp, err := kv.Get(context.Background(), key)
 	if err != nil {
 		log.Errorf("get key %s/%s from etcd error %v", m.Version, key, err)
 		return nil, err
@@ -67,8 +72,18 @@ func (m *EtcdMeta) Read(k interface{}) (*meta.Offset, error) {
 		return nil, nil
 	}
 
+	var out bytes.Buffer
+	v := []byte(resp.Kvs[0].Value)
+	b := bytes.NewReader(v)
+	r, _ := zlib.NewReader(b)
+	if _, err := io.Copy(&out, r); err != nil {
+		log.Errorf("un-compress data from etcd for key{%s} error %v", key, err)
+		return nil, err
+	}
+
 	off := &meta.Offset{}
-	if err := json.Unmarshal([]byte(resp.Kvs[0].Value), off); err != nil {
+	if err := json.Unmarshal(out.Bytes(), off);
+		err != nil {
 		log.Errorf("json unmarshal %s error %v", resp.Kvs[0].Value, err)
 		return nil, err
 	}
@@ -84,12 +99,31 @@ func (m *EtcdMeta) Save(o *meta.Offset) error {
 		return err
 	}
 
-	api := clientv3.NewKV(m.client)
-	if _, err := api.Put(context.Background(), fmt.Sprintf("%s/%d", m.Version, o.ClusterID), string(v)); err != nil {
-		log.Errorf("etcd put key {%s} value {%s} error {%v}", fmt.Sprintf("%s/%d", m.Version, o.ClusterID), string(v), err)
+	k := fmt.Sprintf("%s/%d", m.Version, o.ClusterID)
+
+	var out bytes.Buffer
+	w := zlib.NewWriter(&out)
+	if _, err := w.Write(v); err != nil {
+		log.Errorf("copy compress data for key {%s} value{%s} error %v", k, string(v), err)
 		return err
 	}
-	log.Debugf("save value {%s} to key {%s} successfully", string(v), fmt.Sprintf("%s/%d", m.Version, o.ClusterID))
+
+	if err := w.Flush(); err != nil {
+		log.Errorf("flush zlib writer for key{%s} value{%s} error %s ", k, string(v), err)
+		return err
+	}
+
+	if err := w.Close(); err != nil {
+		log.Errorf("close zlib compress writer for key{%s} error %v", k, err)
+		return err
+	}
+
+	api := clientv3.NewKV(m.client)
+	if _, err := api.Put(context.Background(), k, string(out.Bytes())); err != nil {
+		log.Errorf("etcd put key {%s} value {%s} error {%v}", k, string(v), err)
+		return err
+	}
+	log.Debugf("save value {%s} to key {%s} successfully", string(v), k)
 
 	return nil
 }

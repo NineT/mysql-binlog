@@ -119,13 +119,13 @@ func (mc *MergeConfig) Start() {
 				o := mc.offsets.Remove(tmp).(*meta.Offset)
 				log.Debugf("remove gtid %v", o)
 
-				pg, err := mysql.ParseMysqlGTIDSet(string(pre.Value.(*meta.Offset).OriGtid))
+				pg, err := mysql.ParseMysqlGTIDSet(string(pre.Value.(*meta.Offset).MergedGtid))
 				if err != nil {
 					log.Error("parse previous gtid error ", err)
 					panic(err)
 				}
 
-				if err := pg.Update(string(o.OriGtid)); err != nil {
+				if err := pg.Update(string(o.MergedGtid)); err != nil {
 					log.Error("update gtid error previous gtid:", string(pre.Value.(*meta.Offset).OriGtid), ", next gtid:", string(o.OriGtid), ", error ", err)
 					panic(err)
 				}

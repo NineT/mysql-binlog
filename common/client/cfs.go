@@ -6,7 +6,6 @@ import (
 	"compress/zlib"
 	"encoding/json"
 	"fmt"
-	"github.com/mysql-binlog/common/db"
 	"io"
 	"io/ioutil"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/mysql-binlog/common/db"
 	"github.com/zssky/log"
 
 	"github.com/mysql-binlog/common/final"
