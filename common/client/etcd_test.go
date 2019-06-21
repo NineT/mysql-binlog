@@ -29,8 +29,8 @@ func TestEtcdMeta_Read(t *testing.T) {
 
 	fmt.Println(o.BinFile)
 	fmt.Println(o.BinPos)
-	fmt.Println(string(o.MergedGtid))
-	fmt.Println(string(o.OriGtid))
+	fmt.Println(string(o.IntGtid))
+	fmt.Println(string(o.SinGtid))
 }
 
 func TestEtcdMeta_Save(t *testing.T) {
@@ -40,14 +40,14 @@ func TestEtcdMeta_Save(t *testing.T) {
 	}
 
 	err = m.Save(&meta.Offset{
-		ClusterID:  100,
-		MergedGtid: []byte("2d784ad8-8f7a-4916-858e-d7069e5a24b2:1-30000"),
-		Time:       1560868592,
-		BinFile:    "mysql-bin.000242",
-		BinPos:     154,
-		Counter:    0,
-		Header:     true,
-		OriGtid:    []byte("2d784ad8-8f7a-4916-858e-d7069e5a24b2:1-3000"),
+		ClusterID: 100,
+		IntGtid:   []byte("2d784ad8-8f7a-4916-858e-d7069e5a24b2:1-30000"),
+		Time:      1560868592,
+		BinFile:   "mysql-bin.000242",
+		BinPos:    154,
+		Counter:   0,
+		Header:    true,
+		SinGtid:   []byte("2d784ad8-8f7a-4916-858e-d7069e5a24b2:1-3000"),
 	})
 	if err != nil {
 		log.Fatal(err)

@@ -28,6 +28,9 @@ type TableEventHandler struct {
 // NewEventHandler
 func NewEventHandler(path, table string, curr uint32, compress bool, desc *blog.DataEvent, after *final.After, gch chan []byte) (*TableEventHandler, error) {
 	log.Debug("new event handler")
+	// todo make sure that gtid event is behind the current
+
+
 	bw, err := blog.NewBinlogWriter(path, table, curr, compress, desc)
 	if err != nil {
 		log.Error(err)
@@ -88,7 +91,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 	switch t.Header.EventType {
 	case replication.GTID_EVENT:
 		// gtid event then should remember the latest offset
-		h.offset = h.binWriter.LastPos(t.Gtid, t.Header.Timestamp)
+		h.offset = h.binWriter.LastPos(t.SinGtid, t.Header.Timestamp)
 
 		// write gtid
 		if err := h.binWriter.WriteEvent(t); err != nil {
@@ -103,10 +106,10 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 		// write offset to binlog index file
 		if err := h.idxWriter.Write(&blog.IndexOffset{
 			Dump: &meta.Offset{
-				MergedGtid: t.Gtid,
-				Time:       t.Header.Timestamp,
-				BinFile:    string(t.BinFile),
-				BinPos:     t.Header.LogPos,
+				IntGtid: t.SinGtid,
+				Time:    t.Header.Timestamp,
+				BinFile: string(t.BinFile),
+				BinPos:  t.Header.LogPos,
 			},
 			Local: h.offset,
 		}); err != nil {
@@ -129,7 +132,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 		}
 
 		// return gtid
-		h.GtidChan <- t.Gtid
+		h.GtidChan <- t.SinGtid
 	case replication.QUERY_EVENT:
 		if t.IsDDL { // only ddl then write log
 			// write gtid
@@ -140,10 +143,10 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 			// write offset to binlog index file
 			if err := h.idxWriter.Write(&blog.IndexOffset{
 				Dump: &meta.Offset{
-					MergedGtid: t.Gtid,
-					Time:       t.Header.Timestamp,
-					BinFile:    string(t.BinFile),
-					BinPos:     t.Header.LogPos,
+					IntGtid: t.SinGtid,
+					Time:    t.Header.Timestamp,
+					BinFile: string(t.BinFile),
+					BinPos:  t.Header.LogPos,
 				},
 				Local: h.offset,
 			}); err != nil {
@@ -166,7 +169,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 			}
 
 			// return gtid
-			h.GtidChan <- t.Gtid
+			h.GtidChan <- t.SinGtid
 		}
 	default:
 		// write event

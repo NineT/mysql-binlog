@@ -36,7 +36,8 @@ const (
 type DataEvent struct {
 	Header  *replication.EventHeader // event header
 	Data    []byte                   // data
-	Gtid    []byte                   // gtid
+	IntGtid []byte                   // integrate gtid eg. offset.IngGtid
+	SinGtid []byte                   // single gtid eg. Offset.sinGtid
 	BinFile []byte                   // binlog file
 	IsDDL   bool                     // is ddl
 }
@@ -128,23 +129,25 @@ func GenQueryEvent(e *replication.BinlogEvent, ddl []byte, checksumAlg byte) (*r
 	}, nil
 }
 
-// Binlog2Data: data event from binlog event
-func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, uuid []byte, binFile string, ddl bool) *DataEvent {
+// Binlog2Data: data event from binlog event for sinGtid, intGtid each one is an copy
+func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, sinGtid, intGtid []byte, binFile string, ddl bool) *DataEvent {
 	if checksumAlg == replication.BINLOG_CHECKSUM_ALG_CRC32 {
 		return &DataEvent{
 			Header:  ev.Header,
 			Data:    ev.RawData[replication.EventHeaderSize : len(ev.RawData)-CRC32Size],
-			Gtid:    uuid,
+			IntGtid: intGtid,
+			SinGtid: sinGtid,
 			BinFile: []byte(binFile),
 			IsDDL:   ddl,
 		}
 	}
 
 	return &DataEvent{
-		Header: ev.Header,
-		Data:   ev.RawData[replication.EventHeaderSize:],
-		Gtid:   uuid,
-		IsDDL:  ddl,
+		Header:  ev.Header,
+		Data:    ev.RawData[replication.EventHeaderSize:],
+		IntGtid: intGtid,
+		SinGtid: sinGtid,
+		IsDDL:   ddl,
 	}
 }
 
@@ -327,9 +330,9 @@ func (b *BinlogWriter) write(bt []byte) (int, error) {
 // LastPos for binlog writer
 func (b *BinlogWriter) LastPos(gtid []byte, time uint32) *meta.Offset {
 	return &meta.Offset{
-		MergedGtid: gtid,
-		BinFile:    fmt.Sprintf("%s/%s", b.Dir, b.Name),
-		BinPos:     b.logPos,
-		Time:       time,
+		IntGtid: gtid,
+		BinFile: fmt.Sprintf("%s/%s", b.Dir, b.Name),
+		BinPos:  b.logPos,
+		Time:    time,
 	}
 }

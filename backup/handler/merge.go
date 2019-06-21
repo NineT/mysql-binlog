@@ -34,8 +34,9 @@ type MergeConfig struct {
 	lastFlags       uint16                               // last flag
 	table           string                               // 注意table是传值 不是引用 临时变量 存储事件对应的表名
 	formatDesc      *replication.BinlogEvent             // format description event
+	checksumAlg     byte                                 // checksumAlg
 	latestBegin     *blog.DataEvent                      // begin for latest
-	latestUUID      []byte                               // latest uuid
+	gtid            mysql.GTIDSet                        // current integrate gtid
 	latestGtid      *blog.DataEvent                      // gtid for latest
 	relatedTables   map[string]string                    // relatedTables gtid related tables
 	tableHandlers   map[string]*binlog.TableEventHandler // tableHandlers 每张表的操作
@@ -44,7 +45,7 @@ type MergeConfig struct {
 }
 
 // NewMergeConfig new merge config
-func NewMergeConfig(compress bool, path string, off *meta.Offset, dump *cdb.MetaConf) *MergeConfig {
+func NewMergeConfig(compress bool, path string, off *meta.Offset, dump *cdb.MetaConf) (*MergeConfig, error) {
 	m := &MergeConfig{
 		Compress:        compress,
 		SnapshotPath:    inter.StdPath(path),
@@ -54,16 +55,27 @@ func NewMergeConfig(compress bool, path string, off *meta.Offset, dump *cdb.Meta
 		gc:              make(chan []byte, inter.BufferSize),
 	}
 
+	g, err := mysql.ParseMysqlGTIDSet(string(off.IntGtid))
+	if err != nil {
+		log.Errorf("parse gtid{%s} error{%v}", string(off.IntGtid), err)
+		return nil, err
+	}
+
+	// gtid for all now
+	m.gtid = g
+
 	// header flag take this then take the newly offset
 	m.offsets = list.New()
-	m.offsets.PushBack(&meta.Offset{
-		MergedGtid: off.MergedGtid,
-		OriGtid:    off.MergedGtid,
-		Counter:    0,
-		Header:     true,
-	})
 
-	return m
+	// copy make sure that not modified by another
+	bt := make([]byte, len(off.IntGtid))
+	copy(bt, off.IntGtid)
+	off.SinGtid = bt
+	off.Counter = 0
+	off.Header = true
+	m.offsets.PushBack(off)
+
+	return m, nil
 }
 
 // Start start merge
@@ -85,7 +97,7 @@ func (mc *MergeConfig) Start() {
 	var streamer *replication.BinlogStreamer
 	var err error
 
-	gs, err := mysql.ParseMysqlGTIDSet(string(mc.offsets.Front().Value.(*meta.Offset).OriGtid))
+	gs, err := mysql.ParseMysqlGTIDSet(string(mc.offsets.Front().Value.(*meta.Offset).SinGtid))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -108,7 +120,7 @@ func (mc *MergeConfig) Start() {
 			var tmp *list.Element
 			for e := mc.offsets.Front(); e != nil; e = e.Next() {
 				o := e.Value.(*meta.Offset)
-				if bytes.EqualFold(o.OriGtid, g) {
+				if bytes.EqualFold(o.SinGtid, g) {
 					o.Counter --
 					if o.Counter == 0 {
 						// gtid event flush to binlog file
@@ -124,21 +136,21 @@ func (mc *MergeConfig) Start() {
 				o := mc.offsets.Remove(tmp).(*meta.Offset)
 				log.Debugf("remove gtid %v", o)
 
-				pg, err := mysql.ParseMysqlGTIDSet(string(pre.Value.(*meta.Offset).MergedGtid))
+				pg, err := mysql.ParseMysqlGTIDSet(string(pre.Value.(*meta.Offset).IntGtid))
 				if err != nil {
 					log.Error("parse previous gtid error ", err)
 					mc.After.Errs <- err
 					break
 				}
 
-				if err := pg.Update(string(o.MergedGtid)); err != nil {
-					log.Error("update gtid error previous gtid:", string(pre.Value.(*meta.Offset).OriGtid), ", next gtid:", string(o.OriGtid), ", error ", err)
+				if err := pg.Update(string(o.IntGtid)); err != nil {
+					log.Error("update gtid error previous gtid:", string(pre.Value.(*meta.Offset).SinGtid), ", next gtid:", string(o.SinGtid), ", error ", err)
 					mc.After.Errs <- err
 					break
 				}
 
 				// reset gtid
-				pre.Value.(*meta.Offset).MergedGtid = []byte(pg.String())
+				pre.Value.(*meta.Offset).IntGtid = []byte(pg.String())
 			}
 		default:
 			// check write is block make sure that write cannot hang
@@ -189,7 +201,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 
 		switch strings.ToUpper(string(qe.Query)) {
 		case "BEGIN":
-			mc.latestBegin = blog.Binlog2Data(ev, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, mc.binFile, false)
+			mc.latestBegin = blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, false)
 		case "COMMIT":
 		case "ROLLBACK":
 		case "SAVEPOINT":
@@ -204,7 +216,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 						mc.relatedTables[string(tb)] = string(tb)
 
 						// write ddl to table handler
-						qe, err := blog.GenQueryEvent(ev, ddl, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm)
+						qe, err := blog.GenQueryEvent(ev, ddl, mc.checksumAlg)
 						if err != nil {
 							debug.PrintStack()
 							panic(err)
@@ -215,7 +227,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 					log.Debug("push offset to position list")
 					// append offset
 					mc.offsets.PushBack(&meta.Offset{
-						OriGtid: mc.latestUUID,
+						SinGtid: mc.latestGtid.SinGtid,
 						Counter: len(tbs),
 						Header:  false,
 						Time:    ev.Header.Timestamp,
@@ -230,12 +242,12 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 						h.EventChan <- mc.latestGtid
 
 						// ddl event
-						h.EventChan <- blog.Binlog2Data(ev, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, mc.binFile, true)
+						h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, true)
 					}
 
 					// append offset
 					mc.offsets.PushBack(&meta.Offset{
-						OriGtid: mc.latestUUID,
+						SinGtid: mc.latestGtid.SinGtid,
 						Counter: len(mc.tableHandlers),
 						Header:  false,
 						Time:    ev.Header.Timestamp,
@@ -265,14 +277,15 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 	case replication.USER_VAR_EVENT:
 	case replication.FORMAT_DESCRIPTION_EVENT:
 		mc.formatDesc = ev
+		mc.checksumAlg = mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm
 	case replication.XID_EVENT:
 		for t := range mc.relatedTables {
 			// write xid commit event to each table
-			mc.tableHandlers[t].EventChan <- blog.Binlog2Data(ev, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, mc.binFile, false)
+			mc.tableHandlers[t].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, false)
 		}
 
 		mc.offsets.PushBack(&meta.Offset{
-			OriGtid: mc.latestUUID,
+			SinGtid: mc.latestGtid.SinGtid,
 			Counter: len(mc.relatedTables),
 			Header:  false,
 			Time:    ev.Header.Timestamp,
@@ -301,7 +314,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 		h.EventChan <- mc.latestBegin
 
 		// table map event
-		h.EventChan <- blog.Binlog2Data(ev, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, mc.binFile, false)
+		h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, false)
 
 	case replication.WRITE_ROWS_EVENTv0,
 		replication.WRITE_ROWS_EVENTv1,
@@ -313,7 +326,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 		replication.UPDATE_ROWS_EVENTv1,
 		replication.UPDATE_ROWS_EVENTv2:
 		// write event into even channel
-		mc.tableHandlers[mc.table].EventChan <- blog.Binlog2Data(ev, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, mc.binFile, false)
+		mc.tableHandlers[mc.table].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, false)
 
 	case replication.INCIDENT_EVENT:
 	case replication.HEARTBEAT_EVENT:
@@ -330,11 +343,16 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 			panic(err)
 		}
 
-		// latest uuid
-		mc.latestUUID = []byte(fmt.Sprintf("%s:%d", u.String(), ge.GNO))
+		// single gtid
+		sg := fmt.Sprintf("%s:%d", u.String(), ge.GNO)
+		if err := mc.gtid.Update(sg); err != nil {
+			debug.PrintStack()
+			log.Errorf("update gtid{%s} error %v", sg, err)
+			panic(err)
+		}
 
 		// save the latest gtid event
-		mc.latestGtid = blog.Binlog2Data(ev, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, mc.binFile, false)
+		mc.latestGtid = blog.Binlog2Data(ev, mc.checksumAlg, []byte(sg), []byte(mc.gtid.String()), mc.binFile, false)
 
 	case replication.ANONYMOUS_GTID_EVENT:
 	case replication.PREVIOUS_GTIDS_EVENT:
@@ -346,7 +364,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 func (mc *MergeConfig) newHandler(curr uint32, table string, gch chan []byte) {
 	log.Info("table binlog file path with current ", fmt.Sprintf("%s%s%d.log", mc.SnapshotPath, table, curr))
 
-	evh, err := binlog.NewEventHandler(mc.SnapshotPath, table, curr, mc.Compress, blog.Binlog2Data(mc.formatDesc, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, mc.binFile, false), mc.After, gch)
+	evh, err := binlog.NewEventHandler(mc.SnapshotPath, table, curr, mc.Compress, blog.Binlog2Data(mc.formatDesc, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, false), mc.After, gch)
 	if err != nil {
 		debug.PrintStack()
 		panic(err)
@@ -380,7 +398,7 @@ func (mc *MergeConfig) writeQueryEvent(table []byte, ev *replication.BinlogEvent
 
 	log.Debugf("write ddl")
 	// ddl event
-	h.EventChan <- blog.Binlog2Data(ev, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm, mc.latestUUID, mc.binFile, true)
+	h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, true)
 
 	log.Debugf("finish writeQueryEvent")
 }
