@@ -57,8 +57,8 @@ func NewMergeConfig(compress bool, path string, off *meta.Offset, dump *cdb.Meta
 	// header flag take this then take the newly offset
 	m.offsets = list.New()
 	m.offsets.PushBack(&meta.Offset{
-		MergedGtid: off.OriGtid,
-		OriGtid:    off.OriGtid,
+		MergedGtid: off.MergedGtid,
+		OriGtid:    off.MergedGtid,
 		Counter:    0,
 		Header:     true,
 	})
@@ -204,7 +204,12 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 						mc.relatedTables[string(tb)] = string(tb)
 
 						// write ddl to table handler
-						mc.writeQueryEvent(tb, newQueryEvent(ev.RawData, ev.Header, qe, ddl))
+						qe, err := blog.GenQueryEvent(ev, ddl, mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm)
+						if err != nil {
+							debug.PrintStack()
+							panic(err)
+						}
+						mc.writeQueryEvent(tb, qe)
 					}
 
 					log.Debug("push offset to position list")
@@ -334,30 +339,6 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 	case replication.ANONYMOUS_GTID_EVENT:
 	case replication.PREVIOUS_GTIDS_EVENT:
 	default:
-	}
-}
-
-// newQueryEvent new query evetnt
-func newQueryEvent(raw []byte, header *replication.EventHeader, qe *replication.QueryEvent, ddl []byte) *replication.BinlogEvent {
-	event := &replication.QueryEvent{}
-	qe.Query = ddl
-
-	qb := qe.Encode()
-	if err := event.Decode(qb); err != nil {
-		log.Errorf("query event{%s} encode error %v", string(ddl), err)
-		debug.PrintStack()
-		panic(err)
-	}
-
-	b := bytes.NewBuffer(nil)
-	b.Write(raw[:replication.EventHeaderSize])
-	b.Write(qb)
-	b.Write(raw[len(raw)-4:])
-
-	return &replication.BinlogEvent{
-		Header:  header.Copy(),
-		Event:   qe,
-		RawData: b.Bytes(),
 	}
 }
 

@@ -4,11 +4,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/juju/errors"
-	"github.com/zssky/log"
 	"os"
 	"os/signal"
 	"runtime/pprof"
+
+	"github.com/juju/errors"
+	"github.com/zssky/log"
 
 	"github.com/mysql-binlog/common/client"
 	"github.com/mysql-binlog/common/db"
@@ -100,7 +101,7 @@ func initiate() {
 		}
 	}
 
-	log.Debugf("start binlog offset %v", off)
+	log.Debugf("start binlog gtid{%s}, binlog file{%s}, binlog position{%d}", string(off.MergedGtid), off.BinFile, off.BinPos)
 
 	// init merge config
 	mc = handler.NewMergeConfig(*compress, sp, off, dump)

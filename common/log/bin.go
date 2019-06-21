@@ -1,18 +1,20 @@
 package log
 
 import (
+	"bytes"
 	"compress/zlib"
 	"encoding/binary"
 	"fmt"
-	"github.com/mysql-binlog/common/meta"
 	"hash/crc32"
 	"io"
 	"os"
 
-	"github.com/mysql-binlog/siddontang/go-mysql/replication"
 	"github.com/zssky/log"
 
+	"github.com/mysql-binlog/siddontang/go-mysql/replication"
+
 	"github.com/mysql-binlog/common/inter"
+	"github.com/mysql-binlog/common/meta"
 )
 
 /***
@@ -89,6 +91,41 @@ func NewBinlogWriter(path, table string, curr uint32, compress bool, desc *DataE
 
 	// write , write desc
 	return w, w.writeDesc(curr)
+}
+
+// GenQueryEvent using query event
+func GenQueryEvent(e *replication.BinlogEvent, ddl []byte, checksumAlg byte) (*replication.BinlogEvent, error) {
+	if e.Header.EventType != replication.QUERY_EVENT {
+		return nil, fmt.Errorf("error event type %s", e.Header.EventType)
+	}
+
+	// raw data
+	raw := e.RawData
+	header := e.Header
+
+	qe := e.Event.(*replication.QueryEvent)
+	event := &replication.QueryEvent{}
+	qe.Query = ddl
+
+	qb := qe.Encode()
+	if err := event.Decode(qb); err != nil {
+		log.Errorf("query event{%s} encode error %v", string(ddl), err)
+		return nil, err
+	}
+
+	b := bytes.NewBuffer(nil)
+	b.Write(raw[:replication.EventHeaderSize])
+	b.Write(qb)
+	if checksumAlg == replication.BINLOG_CHECKSUM_ALG_CRC32 {
+		// read the last crc32 bytes
+		b.Write(raw[len(raw)-CRC32Size:])
+	}
+
+	return &replication.BinlogEvent{
+		Header:  header.Copy(),
+		Event:   qe,
+		RawData: b.Bytes(),
+	}, nil
 }
 
 // Binlog2Data: data event from binlog event
