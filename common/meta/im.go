@@ -7,9 +7,9 @@ type Offset struct {
 	Time       uint32 `json:"time"`      // timestamp
 	BinFile    string `json:"file"`      // binlog File
 	BinPos     uint32 `json:"pos"`       // binlog position
-	Counter    int                       // counter
-	Header     bool                      // header flag
-	OriGtid    []byte                    // origin gtid means current gtid event
+	Counter    int    `json:"-"`         // counter
+	Header     bool   `json:"-"`         // header flag
+	OriGtid    []byte `json:"-"`         // origin gtid means current gtid event
 }
 
 // Meta data interface
@@ -19,4 +19,7 @@ type IMeta interface {
 
 	// Save node to storage
 	Save(offset *Offset) error
+
+	// Delete node from storage
+	Delete(k interface{}) error
 }

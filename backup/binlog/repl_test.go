@@ -159,6 +159,8 @@ func TestParseBinlog(t *testing.T) {
 
 	// true: means continue, false: means arrive the final time
 	handler := func(ev *replication.BinlogEvent) error {
+		fmt.Println("binlog position ", ev.Header.LogPos, ", event size ", ev.Header.EventSize, ", event type ", ev.Header.EventType)
+
 		switch ev.Header.EventType {
 		case replication.UNKNOWN_EVENT:
 		case replication.START_EVENT_V3:
@@ -242,9 +244,8 @@ func TestParseBinlog(t *testing.T) {
 		return nil
 	}
 
-	for {
-		if err := parser.ParseFile("/home/pengan/day_1544780980_1544782323.log", int64(4), handler); err != nil {
-			return
-		}
+	// /export/backup/0/test.aaa/1560761463.log /tmp/mysql-bin.000001
+	if err := parser.ParseFile("/export/backup/0/test.aaa/1560761463.log", int64(4), handler); err != nil {
+		return
 	}
 }

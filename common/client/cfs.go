@@ -23,7 +23,7 @@ import (
 
 const (
 	// BinlogOffset file name
-	BinlogIndexFile = "bin.index"
+
 )
 
 // CFSClient  cfs客户端
@@ -434,7 +434,7 @@ func (s *CFSClient) PublicPath() *inter.FileName {
 
 // ReadLastOffset
 func (s *CFSClient) ReadLastOffset() (*db.BinlogOffset, error) {
-	f, err := os.Open(s.Path + BinlogIndexFile)
+	f, err := os.Open(s.Path)
 	if err != nil {
 		return nil, err
 	}

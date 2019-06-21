@@ -50,14 +50,36 @@ func NewEtcdMeta(url, v string) (*EtcdMeta, error) {
 	}, nil
 }
 
-// Read read data from etcd meta
-func (m *EtcdMeta) Read(k interface{}) (*meta.Offset, error) {
+// formatKey for node
+func (m *EtcdMeta) formatKey(k interface{}) string {
 	// format key
 	key := fmt.Sprintf("%v", k)
 	if strings.HasPrefix(key, "/") {
 		key = strings.TrimPrefix(key, "/")
 	}
 	key = fmt.Sprintf("%s/%s", m.Version, key)
+
+	log.Debugf("read key{%s} from etcd", key)
+
+	return key
+}
+
+// Delete key from etcd meta
+func (m *EtcdMeta) Delete(k interface{}) error {
+	key := m.formatKey(k)
+
+	// get response
+	kv := clientv3.NewKV(m.client)
+	if _, err := kv.Delete(context.Background(), key); err != nil {
+		log.Errorf("delete key{%s} from etcd error %v", key, err)
+		return err
+	}
+	return nil
+}
+
+// Read read data from etcd meta
+func (m *EtcdMeta) Read(k interface{}) (*meta.Offset, error) {
+	key := m.formatKey(k)
 
 	// get response
 	kv := clientv3.NewKV(m.client)
@@ -68,7 +90,7 @@ func (m *EtcdMeta) Read(k interface{}) (*meta.Offset, error) {
 	}
 
 	if resp.Count == 0 {
-		log.Warn("key{%s/%s} not exist", m.Version, key)
+		log.Warnf("key{%s} not exist", key)
 		return nil, nil
 	}
 

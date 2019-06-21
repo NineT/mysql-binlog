@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -92,6 +93,7 @@ func (r *TableEventHandler) HandleLogEvent() {
 			}
 
 			if err := r.handle(p); err != nil {
+				debug.PrintStack()
 				panic(err)
 			}
 		}

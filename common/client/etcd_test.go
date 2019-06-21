@@ -22,12 +22,15 @@ func TestEtcdMeta_Read(t *testing.T) {
 		log.Fatal(err)
 	}
 
-	o, err := m.Read(100)
+	o, err := m.Read(0)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Print(string(o.MergedGtid))
+	fmt.Println(o.BinFile)
+	fmt.Println(o.BinPos)
+	fmt.Println(string(o.MergedGtid))
+	fmt.Println(string(o.OriGtid))
 }
 
 func TestEtcdMeta_Save(t *testing.T) {
@@ -49,4 +52,13 @@ func TestEtcdMeta_Save(t *testing.T) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func TestEtcdMeta_Delete(t *testing.T) {
+	m, err := NewEtcdMeta("http://127.0.0.1:2379", "v1")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Fatal(m.Delete(0))
 }

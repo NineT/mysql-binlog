@@ -34,7 +34,7 @@ var (
 	dumpPasswd = flag.String("dumppasswd", "secret", "dump MySQL 密码")
 
 	// clusterID 用于记录是属于那个集群的binlog 用来唯一标识 文件路径
-	clusterID = flag.Int("clusterid", 0, "集群id")
+	clusterID = flag.Int64("clusterid", 0, "集群id")
 
 	// cfs storage path for binlog data
 	cfsPath = flag.String("cfspath", "/export/backup/", "cfs 数据存储目录")
@@ -92,7 +92,15 @@ func initiate() {
 		}
 		log.Info("start binlog position ", string(pos.OriGtid))
 		off = pos
+
+		off.ClusterID = *clusterID
+		// save newly get offset to etcd as well
+		if err := etc.Save(off); err != nil {
+			log.Fatalf("save offset{%v} to etcd error %v", off, err)
+		}
 	}
+
+	log.Debugf("start binlog offset %v", off)
 
 	// init merge config
 	mc = handler.NewMergeConfig(*compress, sp, off, dump)
