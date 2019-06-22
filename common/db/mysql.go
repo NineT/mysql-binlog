@@ -422,10 +422,10 @@ func (c *MetaConf) MasterStatus() (*meta.Offset, error) {
 	}
 
 	off := &meta.Offset{
-		IntGtid: []byte(g.String()),
-		SinGtid: []byte(g.String()),
-		BinFile: f,
-		BinPos:  uint32(p),
+		ExedGtid: []byte(g.String()),
+		TrxGtid:  []byte(g.String()),
+		BinFile:  f,
+		BinPos:   uint32(p),
 	}
 
 	return off, nil

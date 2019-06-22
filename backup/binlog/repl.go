@@ -30,7 +30,6 @@ func NewEventHandler(path, table string, curr uint32, compress bool, desc *blog.
 	log.Debug("new event handler")
 	// todo make sure that gtid event is behind the current
 
-
 	bw, err := blog.NewBinlogWriter(path, table, curr, compress, desc)
 	if err != nil {
 		log.Error(err)
@@ -106,10 +105,10 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 		// write offset to binlog index file
 		if err := h.idxWriter.Write(&blog.IndexOffset{
 			Dump: &meta.Offset{
-				IntGtid: t.SinGtid,
-				Time:    t.Header.Timestamp,
-				BinFile: string(t.BinFile),
-				BinPos:  t.Header.LogPos,
+				ExedGtid: t.SinGtid,
+				Time:     t.Header.Timestamp,
+				BinFile:  string(t.BinFile),
+				BinPos:   t.Header.LogPos,
 			},
 			Local: h.offset,
 		}); err != nil {
@@ -134,7 +133,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 		// return gtid
 		h.GtidChan <- t.SinGtid
 	case replication.QUERY_EVENT:
-		if t.IsDDL { // only ddl then write log
+		if t.IsDDL { // only ddl then take it as commit event to check whether it is the right to flush logs
 			// write gtid
 			if err := h.binWriter.WriteEvent(t); err != nil {
 				return err
@@ -143,10 +142,10 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 			// write offset to binlog index file
 			if err := h.idxWriter.Write(&blog.IndexOffset{
 				Dump: &meta.Offset{
-					IntGtid: t.SinGtid,
-					Time:    t.Header.Timestamp,
-					BinFile: string(t.BinFile),
-					BinPos:  t.Header.LogPos,
+					ExedGtid: t.SinGtid,
+					Time:     t.Header.Timestamp,
+					BinFile:  string(t.BinFile),
+					BinPos:   t.Header.LogPos,
 				},
 				Local: h.offset,
 			}); err != nil {
@@ -170,6 +169,11 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 
 			// return gtid
 			h.GtidChan <- t.SinGtid
+		} else {
+			// write query event as well
+			if err := h.binWriter.WriteEvent(t); err != nil {
+				return err
+			}
 		}
 	default:
 		// write event

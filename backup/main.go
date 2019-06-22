@@ -88,10 +88,10 @@ func initiate() {
 	off := o
 	if o == nil {
 		pos, err := dump.MasterStatus()
-		if err != nil || pos.SinGtid == nil {
+		if err != nil || pos.TrxGtid == nil {
 			log.Fatal(err, " or gtid is empty")
 		}
-		log.Info("start binlog position ", string(pos.SinGtid))
+		log.Info("start binlog position ", string(pos.TrxGtid))
 		off = pos
 
 		off.ClusterID = *clusterID
@@ -101,7 +101,7 @@ func initiate() {
 		}
 	}
 
-	log.Debugf("start binlog gtid{%s}, binlog file{%s}, binlog position{%d}", string(off.IntGtid), off.BinFile, off.BinPos)
+	log.Debugf("start binlog gtid{%s}, binlog file{%s}, binlog position{%d}", string(off.ExedGtid), off.BinFile, off.BinPos)
 
 	// init merge config
 	mc, err := handler.NewMergeConfig(*compress, sp, off, dump)

@@ -39,7 +39,7 @@ type DataEvent struct {
 	IntGtid []byte                   // integrate gtid eg. offset.IngGtid
 	SinGtid []byte                   // single gtid eg. Offset.sinGtid
 	BinFile []byte                   // binlog file
-	IsDDL   bool                     // is ddl
+	IsDDL   bool                     // is ddl to
 }
 
 // Binlog 每个生成的binlog文件都对应一个结构
@@ -330,9 +330,9 @@ func (b *BinlogWriter) write(bt []byte) (int, error) {
 // LastPos for binlog writer
 func (b *BinlogWriter) LastPos(gtid []byte, time uint32) *meta.Offset {
 	return &meta.Offset{
-		IntGtid: gtid,
-		BinFile: fmt.Sprintf("%s/%s", b.Dir, b.Name),
-		BinPos:  b.logPos,
-		Time:    time,
+		ExedGtid: gtid,
+		BinFile:  fmt.Sprintf("%s/%s", b.Dir, b.Name),
+		BinPos:   b.logPos,
+		Time:     time,
 	}
 }

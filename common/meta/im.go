@@ -2,14 +2,14 @@ package meta
 
 import (
 	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
-	"github.com/mysql-binlog/siddontang/go/log"
+	"github.com/zssky/log"
 )
 
 // Offset binlog offset write to meta
 type Offset struct {
 	ClusterID int64  `json:"clusterid"` // cluster id
-	IntGtid   []byte `json:"intgtid"`   // integrate gtid equals to gtid that merged the next eg. 2d784ad8-8f7a-4916-858e-d7069e5a24b2:1-30000
-	SinGtid   []byte `json:"singtid"`   // single gtid equals to gtid exists on gtid event  eg. 2d784ad8-8f7a-4916-858e-d7069e5a24b2:100
+	ExedGtid  []byte `json:"exedgtid"`  // executed gtid equals to gtid that merged the next eg. 2d784ad8-8f7a-4916-858e-d7069e5a24b2:1-30000
+	TrxGtid   []byte `json:"trxgtid"`   // transaction gtid equals to gtid exists on gtid event  eg. 2d784ad8-8f7a-4916-858e-d7069e5a24b2:100
 	Time      uint32 `json:"time"`      // timestamp
 	BinFile   string `json:"file"`      // binlog File
 	BinPos    uint32 `json:"pos"`       // binlog position
@@ -28,15 +28,15 @@ func LessEqual(o1, o2 *Offset) (bool, error) {
 		return false, nil
 	}
 
-	g1, err := mysql.ParseMysqlGTIDSet(string(o1.IntGtid))
+	g1, err := mysql.ParseMysqlGTIDSet(string(o1.ExedGtid))
 	if err != nil {
-		log.Warnf("gtid {%s} format error %v", string(o1.IntGtid), err)
+		log.Warnf("gtid {%s} format error %v", string(o1.ExedGtid), err)
 		return false, err
 	}
 
-	g2, err := mysql.ParseMysqlGTIDSet(string(o2.IntGtid))
+	g2, err := mysql.ParseMysqlGTIDSet(string(o2.ExedGtid))
 	if err != nil {
-		log.Warnf("gtid {%s} format error %v", string(o2.IntGtid), err)
+		log.Warnf("gtid {%s} format error %v", string(o2.ExedGtid), err)
 		return false, err
 	}
 

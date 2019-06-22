@@ -55,9 +55,9 @@ func NewMergeConfig(compress bool, path string, off *meta.Offset, dump *cdb.Meta
 		gc:              make(chan []byte, inter.BufferSize),
 	}
 
-	g, err := mysql.ParseMysqlGTIDSet(string(off.IntGtid))
+	g, err := mysql.ParseMysqlGTIDSet(string(off.ExedGtid))
 	if err != nil {
-		log.Errorf("parse gtid{%s} error{%v}", string(off.IntGtid), err)
+		log.Errorf("parse gtid{%s} error{%v}", string(off.ExedGtid), err)
 		return nil, err
 	}
 
@@ -68,9 +68,9 @@ func NewMergeConfig(compress bool, path string, off *meta.Offset, dump *cdb.Meta
 	m.offsets = list.New()
 
 	// copy make sure that not modified by another
-	bt := make([]byte, len(off.IntGtid))
-	copy(bt, off.IntGtid)
-	off.SinGtid = bt
+	bt := make([]byte, len(off.ExedGtid))
+	copy(bt, off.ExedGtid)
+	off.TrxGtid = bt
 	off.Counter = 0
 	off.Header = true
 	m.offsets.PushBack(off)
@@ -97,7 +97,7 @@ func (mc *MergeConfig) Start() {
 	var streamer *replication.BinlogStreamer
 	var err error
 
-	gs, err := mysql.ParseMysqlGTIDSet(string(mc.offsets.Front().Value.(*meta.Offset).SinGtid))
+	gs, err := mysql.ParseMysqlGTIDSet(string(mc.offsets.Front().Value.(*meta.Offset).TrxGtid))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func (mc *MergeConfig) Start() {
 			var tmp *list.Element
 			for e := mc.offsets.Front(); e != nil; e = e.Next() {
 				o := e.Value.(*meta.Offset)
-				if bytes.EqualFold(o.SinGtid, g) {
+				if bytes.EqualFold(o.TrxGtid, g) {
 					o.Counter --
 					if o.Counter == 0 {
 						// gtid event flush to binlog file
@@ -136,21 +136,21 @@ func (mc *MergeConfig) Start() {
 				o := mc.offsets.Remove(tmp).(*meta.Offset)
 				log.Debugf("remove gtid %v", o)
 
-				pg, err := mysql.ParseMysqlGTIDSet(string(pre.Value.(*meta.Offset).IntGtid))
+				pg, err := mysql.ParseMysqlGTIDSet(string(pre.Value.(*meta.Offset).ExedGtid))
 				if err != nil {
 					log.Error("parse previous gtid error ", err)
 					mc.After.Errs <- err
 					break
 				}
 
-				if err := pg.Update(string(o.IntGtid)); err != nil {
-					log.Error("update gtid error previous gtid:", string(pre.Value.(*meta.Offset).SinGtid), ", next gtid:", string(o.SinGtid), ", error ", err)
+				if err := pg.Update(string(o.ExedGtid)); err != nil {
+					log.Error("update gtid error previous gtid:", string(pre.Value.(*meta.Offset).TrxGtid), ", next gtid:", string(o.TrxGtid), ", error ", err)
 					mc.After.Errs <- err
 					break
 				}
 
 				// reset gtid
-				pre.Value.(*meta.Offset).IntGtid = []byte(pg.String())
+				pre.Value.(*meta.Offset).ExedGtid = []byte(pg.String())
 			}
 		default:
 			// check write is block make sure that write cannot hang
@@ -227,7 +227,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 					log.Debug("push offset to position list")
 					// append offset
 					mc.offsets.PushBack(&meta.Offset{
-						SinGtid: mc.latestGtid.SinGtid,
+						TrxGtid: mc.latestGtid.SinGtid,
 						Counter: len(tbs),
 						Header:  false,
 						Time:    ev.Header.Timestamp,
@@ -247,7 +247,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 
 					// append offset
 					mc.offsets.PushBack(&meta.Offset{
-						SinGtid: mc.latestGtid.SinGtid,
+						TrxGtid: mc.latestGtid.SinGtid,
 						Counter: len(mc.tableHandlers),
 						Header:  false,
 						Time:    ev.Header.Timestamp,
@@ -285,7 +285,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 		}
 
 		mc.offsets.PushBack(&meta.Offset{
-			SinGtid: mc.latestGtid.SinGtid,
+			TrxGtid: mc.latestGtid.SinGtid,
 			Counter: len(mc.relatedTables),
 			Header:  false,
 			Time:    ev.Header.Timestamp,
