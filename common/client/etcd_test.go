@@ -22,7 +22,7 @@ func TestEtcdMeta_Read(t *testing.T) {
 		log.Fatal(err)
 	}
 
-	o, err := m.Read(0)
+	o, err := m.Read(1)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -40,14 +40,14 @@ func TestEtcdMeta_Save(t *testing.T) {
 	}
 
 	err = m.Save(&meta.Offset{
-		ClusterID: 100,
-		ExedGtid:  []byte("2d784ad8-8f7a-4916-858e-d7069e5a24b2:1-30000"),
-		Time:      1560868592,
-		BinFile:   "mysql-bin.000242",
-		BinPos:    154,
-		Counter:   0,
-		Header:    true,
-		TrxGtid:   []byte("2d784ad8-8f7a-4916-858e-d7069e5a24b2:1-3000"),
+		CID:      100,
+		ExedGtid: []byte("2d784ad8-8f7a-4916-858e-d7069e5a24b2:1-30000"),
+		Time:     1560868592,
+		BinFile:  "mysql-bin.000242",
+		BinPos:   154,
+		Counter:  0,
+		Header:   true,
+		TrxGtid:  []byte("2d784ad8-8f7a-4916-858e-d7069e5a24b2:1-3000"),
 	})
 	if err != nil {
 		log.Fatal(err)

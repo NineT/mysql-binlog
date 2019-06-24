@@ -25,10 +25,10 @@ import (
 
 // MergeConfig merge conf
 type MergeConfig struct {
-	Compress        bool                                 // compress
 	SnapshotPath    string                               // 数据 kv 存储路径 快照存储路径
 	After           *final.After                         // After math for merge
 	DumpMySQLConfig *cdb.MetaConf                        // DumpMySQLConfig dump mysql 的操作
+	cid             int64                                // cluster id
 	binFile         string                               // binlog file
 	lastEventTime   uint32                               // last event time:
 	lastFlags       uint16                               // last flag
@@ -45,9 +45,8 @@ type MergeConfig struct {
 }
 
 // NewMergeConfig new merge config
-func NewMergeConfig(compress bool, path string, off *meta.Offset, dump *cdb.MetaConf) (*MergeConfig, error) {
+func NewMergeConfig(path string, off *meta.Offset, dump *cdb.MetaConf) (*MergeConfig, error) {
 	m := &MergeConfig{
-		Compress:        compress,
 		SnapshotPath:    inter.StdPath(path),
 		DumpMySQLConfig: dump,
 		relatedTables:   make(map[string]string),
@@ -74,6 +73,9 @@ func NewMergeConfig(compress bool, path string, off *meta.Offset, dump *cdb.Meta
 	off.Counter = 0
 	off.Header = true
 	m.offsets.PushBack(off)
+
+	// set cluster id
+	m.cid = off.CID
 
 	return m, nil
 }
@@ -115,7 +117,12 @@ func (mc *MergeConfig) Start() {
 		case e := <-mc.After.Errs:
 			// wait for errors
 			panic(e)
-		case g := <-mc.gc:
+		case g, hasMore := <-mc.gc:
+			if !hasMore {
+				// channel is closed
+				log.Warn("gtid channel is closed")
+				return
+			}
 			// take the priority to clear offset
 			var tmp *list.Element
 			for e := mc.offsets.Front(); e != nil; e = e.Next() {
@@ -156,8 +163,8 @@ func (mc *MergeConfig) Start() {
 			// check write is block make sure that write cannot hang
 			// consider the worst situation for only one channel exists then size(offset) must < inter.BufferSize
 			if mc.offsets.Len() >= inter.BufferSize {
-				log.Warnf("buffer is full for offset size %d >= %d wait for 1.sec for buffer clearing", mc.offsets.Len(), inter.BufferSize)
-				time.Sleep(time.Second * 1)
+				log.Warnf("buffer is full for offset size %d >= %d wait for 1.sec for buffer clearing because storage write slowly", mc.offsets.Len(), inter.BufferSize)
+				time.Sleep(time.Second)
 				break
 			}
 
@@ -201,7 +208,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 
 		switch strings.ToUpper(string(qe.Query)) {
 		case "BEGIN":
-			mc.latestBegin = blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, false)
+			mc.latestBegin = blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
 		case "COMMIT":
 		case "ROLLBACK":
 		case "SAVEPOINT":
@@ -227,12 +234,14 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 					log.Debug("push offset to position list")
 					// append offset
 					mc.offsets.PushBack(&meta.Offset{
-						TrxGtid: mc.latestGtid.SinGtid,
-						Counter: len(tbs),
-						Header:  false,
-						Time:    ev.Header.Timestamp,
-						BinFile: mc.binFile,
-						BinPos:  ev.Header.LogPos,
+						CID:      mc.cid,
+						TrxGtid:  mc.latestGtid.TrxGtid,
+						ExedGtid: mc.latestGtid.TrxGtid, // here executed gtid equals = transaction gtid
+						Counter:  len(tbs),
+						Header:   false,
+						Time:     ev.Header.Timestamp,
+						BinFile:  mc.binFile,
+						BinPos:   ev.Header.LogPos,
 					})
 				} else {
 					// common packet with ddl write to each table
@@ -242,17 +251,19 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 						h.EventChan <- mc.latestGtid
 
 						// ddl event
-						h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, true)
+						h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
 					}
 
 					// append offset
 					mc.offsets.PushBack(&meta.Offset{
-						TrxGtid: mc.latestGtid.SinGtid,
-						Counter: len(mc.tableHandlers),
-						Header:  false,
-						Time:    ev.Header.Timestamp,
-						BinFile: mc.binFile,
-						BinPos:  ev.Header.LogPos,
+						CID:      mc.cid,
+						TrxGtid:  mc.latestGtid.TrxGtid,
+						ExedGtid: mc.latestGtid.TrxGtid, // newly then make executed gtid = transaction gtid
+						Counter:  len(mc.tableHandlers),
+						Header:   false,
+						Time:     ev.Header.Timestamp,
+						BinFile:  mc.binFile,
+						BinPos:   ev.Header.LogPos,
 					})
 				}
 			}
@@ -281,16 +292,18 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 	case replication.XID_EVENT:
 		for t := range mc.relatedTables {
 			// write xid commit event to each table
-			mc.tableHandlers[t].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, false)
+			mc.tableHandlers[t].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
 		}
 
 		mc.offsets.PushBack(&meta.Offset{
-			TrxGtid: mc.latestGtid.SinGtid,
-			Counter: len(mc.relatedTables),
-			Header:  false,
-			Time:    ev.Header.Timestamp,
-			BinFile: mc.binFile,
-			BinPos:  ev.Header.LogPos,
+			CID:      mc.cid,
+			TrxGtid:  mc.latestGtid.TrxGtid,
+			ExedGtid: mc.latestGtid.TrxGtid, // newly then make executed gtid = transaction gtid
+			Counter:  len(mc.relatedTables),
+			Header:   false,
+			Time:     ev.Header.Timestamp,
+			BinFile:  mc.binFile,
+			BinPos:   ev.Header.LogPos,
 		})
 	case replication.BEGIN_LOAD_QUERY_EVENT:
 	case replication.EXECUTE_LOAD_QUERY_EVENT:
@@ -314,7 +327,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 		h.EventChan <- mc.latestBegin
 
 		// table map event
-		h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, false)
+		h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
 
 	case replication.WRITE_ROWS_EVENTv0,
 		replication.WRITE_ROWS_EVENTv1,
@@ -326,7 +339,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 		replication.UPDATE_ROWS_EVENTv1,
 		replication.UPDATE_ROWS_EVENTv2:
 		// write event into even channel
-		mc.tableHandlers[mc.table].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, false)
+		mc.tableHandlers[mc.table].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
 
 	case replication.INCIDENT_EVENT:
 	case replication.HEARTBEAT_EVENT:
@@ -364,7 +377,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 func (mc *MergeConfig) newHandler(curr uint32, table string, gch chan []byte) {
 	log.Info("table binlog file path with current ", fmt.Sprintf("%s%s%d.log", mc.SnapshotPath, table, curr))
 
-	evh, err := binlog.NewEventHandler(mc.SnapshotPath, table, curr, mc.Compress, blog.Binlog2Data(mc.formatDesc, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, false), mc.After, gch)
+	evh, err := binlog.NewEventHandler(mc.SnapshotPath, table, curr, mc.cid, blog.Binlog2Data(mc.formatDesc, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false), mc.After, gch)
 	if err != nil {
 		debug.PrintStack()
 		panic(err)
@@ -381,6 +394,9 @@ func (mc *MergeConfig) closeHandler() {
 		log.Info("close table ", t, " all channels")
 		h.Close()
 	}
+
+	// close gc channel
+	close(mc.gc)
 }
 
 // writeQueryEvent write query event into binlog file
@@ -398,7 +414,7 @@ func (mc *MergeConfig) writeQueryEvent(table []byte, ev *replication.BinlogEvent
 
 	log.Debugf("write ddl")
 	// ddl event
-	h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.SinGtid, []byte(mc.gtid.String()), mc.binFile, true)
+	h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
 
 	log.Debugf("finish writeQueryEvent")
 }

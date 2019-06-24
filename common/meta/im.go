@@ -7,14 +7,14 @@ import (
 
 // Offset binlog offset write to meta
 type Offset struct {
-	ClusterID int64  `json:"clusterid"` // cluster id
-	ExedGtid  []byte `json:"exedgtid"`  // executed gtid equals to gtid that merged the next eg. 2d784ad8-8f7a-4916-858e-d7069e5a24b2:1-30000
-	TrxGtid   []byte `json:"trxgtid"`   // transaction gtid equals to gtid exists on gtid event  eg. 2d784ad8-8f7a-4916-858e-d7069e5a24b2:100
-	Time      uint32 `json:"time"`      // timestamp
-	BinFile   string `json:"file"`      // binlog File
-	BinPos    uint32 `json:"pos"`       // binlog position
-	Counter   int    `json:"-"`         // counter
-	Header    bool   `json:"-"`         // header flag
+	CID      int64  `json:"clusterid"` // cluster id
+	ExedGtid []byte `json:"exedgtid"`  // executed gtid equals to gtid that merged the next eg. 2d784ad8-8f7a-4916-858e-d7069e5a24b2:1-30000
+	TrxGtid  []byte `json:"trxgtid"`   // transaction gtid equals to gtid exists on gtid event  eg. 2d784ad8-8f7a-4916-858e-d7069e5a24b2:100
+	Time     uint32 `json:"time"`      // timestamp
+	BinFile  string `json:"file"`      // binlog File
+	BinPos   uint32 `json:"pos"`       // binlog position
+	Counter  int    `json:"-"`         // counter
+	Header   bool   `json:"-"`         // header flag
 }
 
 // LessEqual whether the o{mean the current offset} is <= another offset

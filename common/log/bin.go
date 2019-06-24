@@ -34,12 +34,12 @@ const (
 
 // DataEvent
 type DataEvent struct {
-	Header  *replication.EventHeader // event header
-	Data    []byte                   // data
-	IntGtid []byte                   // integrate gtid eg. offset.IngGtid
-	SinGtid []byte                   // single gtid eg. Offset.sinGtid
-	BinFile []byte                   // binlog file
-	IsDDL   bool                     // is ddl to
+	Header   *replication.EventHeader // event header
+	Data     []byte                   // data
+	ExedGtid []byte                   // executed gtid eg. offset.IngGtid
+	TrxGtid  []byte                   // transaction gtid eg. Offset.sinGtid
+	BinFile  []byte                   // binlog file
+	IsDDL    bool                     // is ddl to
 }
 
 // Binlog 每个生成的binlog文件都对应一个结构
@@ -56,13 +56,21 @@ type BinlogWriter struct {
 	logPos     uint32                   // logPos 文件位置
 }
 
+// WriterExists belong to writer property
+func WriterExists(path, table string, curr uint32) bool {
+	return inter.Exists(fmt.Sprintf("%s%s/%d.log", path, table, curr))
+}
+
 // NewBinlogWriter new binlog writer for binlog write
-func NewBinlogWriter(path, table string, curr uint32, compress bool, desc *DataEvent) (*BinlogWriter, error) {
+func NewBinlogWriter(path, table string, curr uint32, desc *DataEvent) (*BinlogWriter, error) {
 	w := &BinlogWriter{
 		Name:     fmt.Sprintf("%d.log", curr),
 		Dir:      fmt.Sprintf("%s%s", path, table),
 		Desc:     desc,
-		compress: compress,
+		compress: false,
+		xid:      0,
+		crc:      0,
+		logPos:   0,
 	}
 
 	f, err := inter.CreateFile(fmt.Sprintf("%s/%s", w.Dir, w.Name))
@@ -73,7 +81,7 @@ func NewBinlogWriter(path, table string, curr uint32, compress bool, desc *DataE
 
 	w.f = f  // set file
 	w.iw = f // set file writer
-	if compress { // 开启压缩
+	if false { // 开启压缩
 		// zlib 压缩数据
 		iw := zlib.NewWriter(f)
 
@@ -92,6 +100,46 @@ func NewBinlogWriter(path, table string, curr uint32, compress bool, desc *DataE
 
 	// write , write desc
 	return w, w.writeDesc(curr)
+}
+
+// RecoverWriter using the origin writer to the log file
+func RecoverWriter(path, table string, curr, logPos uint32, desc *DataEvent) (*BinlogWriter, error) {
+	w := &BinlogWriter{
+		Name:       fmt.Sprintf("%d.log", curr),
+		Dir:        fmt.Sprintf("%s%s", path, table),
+		Desc:       desc,
+		compress:   false,
+		lastHeader: desc.Header,
+		logPos:     logPos,
+		xid:        0,
+		crc:        0,
+	}
+
+	// open the file
+	f, err := os.OpenFile(fmt.Sprintf("%s/%s", w.Dir, w.Name), os.O_RDWR, inter.FileMode)
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+
+	// seek to the right offset
+	if _, err := f.Seek(int64(logPos), 0); err != nil {
+		log.Errorf("fseek %d error %v", logPos, err)
+		return nil, err
+	}
+
+	w.f = f  // set file
+	w.iw = f // set file writer
+	if false { // 开启压缩
+		// zlib 压缩数据
+		iw := zlib.NewWriter(f)
+
+		// set writer
+		w.iw = iw
+	}
+
+	// return writer
+	return w, nil
 }
 
 // GenQueryEvent using query event
@@ -133,27 +181,38 @@ func GenQueryEvent(e *replication.BinlogEvent, ddl []byte, checksumAlg byte) (*r
 func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, sinGtid, intGtid []byte, binFile string, ddl bool) *DataEvent {
 	if checksumAlg == replication.BINLOG_CHECKSUM_ALG_CRC32 {
 		return &DataEvent{
-			Header:  ev.Header,
-			Data:    ev.RawData[replication.EventHeaderSize : len(ev.RawData)-CRC32Size],
-			IntGtid: intGtid,
-			SinGtid: sinGtid,
-			BinFile: []byte(binFile),
-			IsDDL:   ddl,
+			Header:   ev.Header,
+			Data:     ev.RawData[replication.EventHeaderSize : len(ev.RawData)-CRC32Size],
+			ExedGtid: intGtid,
+			TrxGtid:  sinGtid,
+			BinFile:  []byte(binFile),
+			IsDDL:    ddl,
 		}
 	}
 
 	return &DataEvent{
-		Header:  ev.Header,
-		Data:    ev.RawData[replication.EventHeaderSize:],
-		IntGtid: intGtid,
-		SinGtid: sinGtid,
-		IsDDL:   ddl,
+		Header:   ev.Header,
+		Data:     ev.RawData[replication.EventHeaderSize:],
+		ExedGtid: intGtid,
+		TrxGtid:  sinGtid,
+		IsDDL:    ddl,
 	}
 }
 
 // Clear 清除悬挂引用
-func (b *BinlogWriter) Clear() {
-	b.f = nil
+func (b *BinlogWriter) Close() {
+	// flush zlib writer
+	if b.compress && b.iw != nil {
+		if err := b.iw.(*zlib.Writer).Flush(); err != nil {
+			log.Error("flush zlib writer ", fmt.Sprintf("%s/%s", b.Dir, b.Name), " error")
+		}
+	}
+
+	// close binlog file
+	if err := b.f.Close(); err != nil {
+		// do something if close file error
+		log.Error("close binlog file ", fmt.Sprintf("%s/%s", b.Dir, b.Name), " error")
+	}
 	b.reset()
 }
 
@@ -328,9 +387,11 @@ func (b *BinlogWriter) write(bt []byte) (int, error) {
 }
 
 // LastPos for binlog writer
-func (b *BinlogWriter) LastPos(gtid []byte, time uint32) *meta.Offset {
+func (b *BinlogWriter) LastPos(cid int64, exed, trx []byte, time uint32) *meta.Offset {
 	return &meta.Offset{
-		ExedGtid: gtid,
+		CID:      cid,
+		ExedGtid: exed,
+		TrxGtid:  trx,
 		BinFile:  fmt.Sprintf("%s/%s", b.Dir, b.Name),
 		BinPos:   b.logPos,
 		Time:     time,

@@ -121,7 +121,7 @@ func (m *EtcdMeta) Save(o *meta.Offset) error {
 		return err
 	}
 
-	k := fmt.Sprintf("%s/%d", m.Version, o.ClusterID)
+	k := fmt.Sprintf("%s/%d", m.Version, o.CID)
 
 	var out bytes.Buffer
 	w := zlib.NewWriter(&out)

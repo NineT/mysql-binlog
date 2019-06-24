@@ -35,16 +35,13 @@ var (
 	dumpPasswd = flag.String("dumppasswd", "secret", "dump MySQL 密码")
 
 	// clusterID 用于记录是属于那个集群的binlog 用来唯一标识 文件路径
-	clusterID = flag.Int64("clusterid", 0, "集群id")
+	cid = flag.Int64("cid", 1, "集群id")
 
 	// cfs storage path for binlog data
 	cfsPath = flag.String("cfspath", "/export/backup/", "cfs 数据存储目录")
 
 	// etcd url
 	etcd = flag.String("etcd", "http://localhost:2379", "etcd 请求地址")
-
-	// compress 是否压缩数据
-	compress = flag.Bool("compress", false, "是否压缩数据")
 
 	// log level
 	level = flag.String("level", "debug", "日志级别log level {debug/info/warn/error}")
@@ -68,7 +65,7 @@ func initiate() {
 	}
 
 	// data storage path clusterID
-	sp := fmt.Sprintf("%s%d", inter.StdPath(*cfsPath), *clusterID)
+	sp := fmt.Sprintf("%s%d", inter.StdPath(*cfsPath), *cid)
 
 	// 创建目录
 	inter.CreateLocalDir(sp)
@@ -79,7 +76,7 @@ func initiate() {
 	}
 
 	// newly offset
-	o, err := etc.Read(*clusterID)
+	o, err := etc.Read(*cid)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -94,7 +91,7 @@ func initiate() {
 		log.Info("start binlog position ", string(pos.TrxGtid))
 		off = pos
 
-		off.ClusterID = *clusterID
+		off.CID = *cid
 		// save newly get offset to etcd as well
 		if err := etc.Save(off); err != nil {
 			log.Fatalf("save offset{%v} to etcd error %v", off, err)
@@ -104,7 +101,7 @@ func initiate() {
 	log.Debugf("start binlog gtid{%s}, binlog file{%s}, binlog position{%d}", string(off.ExedGtid), off.BinFile, off.BinPos)
 
 	// init merge config
-	mc, err := handler.NewMergeConfig(*compress, sp, off, dump)
+	mc, err = handler.NewMergeConfig(sp, off, dump)
 	if err != nil {
 		log.Fatal(err)
 	}

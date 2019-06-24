@@ -26,46 +26,69 @@ const (
 
 // IndexOffset including origin MySQL binlog offset and generated binlog offset
 type IndexOffset struct {
-	Dump  *meta.Offset `json:"dump"`  // origin MySQL dump offset
-	Local *meta.Offset `json:"local"` // generated local binlog offset
+	DumpFile string       `json:"file"`  // dump binlog file name
+	DumpPos  uint32       `json:"pos"`   // dump binlog position
+	Local    *meta.Offset `json:"local"` // generated local binlog offset
 }
 
 // IndexWriter binlog index using seconds as well for quick offset get
 type IndexWriter struct {
+	Name string    // index file name
 	dir  string    // binlog index file path
 	curr uint32    // binlog timestamp
 	fw   *os.File  // WriteEvent WriteEvent 生成binlog
 	iw   io.Writer // iw io writer
 }
 
+// IndexExists index file exits
+func IndexExists(dir string, curr uint32) bool {
+	name := fmt.Sprintf("%s/%d%s", dir, curr, BinlogIndexFile)
+	return inter.Exists(name)
+}
+
 // NewIndexWriter new index writer
 func NewIndexWriter(dir string, curr uint32) (*IndexWriter, error) {
 	name := fmt.Sprintf("%s/%d%s", dir, curr, BinlogIndexFile)
-	_, err := os.Stat(name) //os.Stat获取文件信息
-	flag := true
-	if err != nil {
-		if os.IsExist(err) {
-			flag = true
-		}
-		flag = false
-	}
-
 	w := &IndexWriter{
+		Name: name,
 		dir:  dir,
 		curr: curr,
 	}
 
-	m := os.O_CREATE | os.O_RDWR
-	if flag {
-		m = os.O_RDWR | os.O_APPEND
-	}
-
-	// file exists
-	f, err := os.OpenFile(name, m, os.FileMode(0666))
+	// create new index file
+	f, err := inter.CreateFile(name)
 	if err != nil {
 		log.Error("open index file{%s} error %v", name, err)
 		return nil, err
 	}
+	w.fw = f
+	w.iw = f
+
+	return w, nil
+}
+
+// RecoverIndex for no need to re-using the index writer
+func RecoverIndex(dir string, curr uint32) (*IndexWriter, error) {
+	name := fmt.Sprintf("%s/%d%s", dir, curr, BinlogIndexFile)
+	w := &IndexWriter{
+		Name: name,
+		dir:  dir,
+		curr: curr,
+	}
+
+	// open the file
+	f, err := os.OpenFile(name, os.O_RDWR, inter.FileMode)
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+
+	if _, err := f.Seek(0, 2); err != nil {
+		log.Errorf("fseek tail error %v", err)
+		return nil, err
+	}
+
+	// writer to the last tail event
 	w.fw = f
 	w.iw = f
 

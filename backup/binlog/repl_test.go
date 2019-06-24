@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/zssky/log"
 	"io/ioutil"
-	"log"
 	"reflect"
 	"testing"
 	"time"
@@ -27,6 +27,22 @@ func initSyncer() {
 	}
 
 	syncer = replication.NewBinlogSyncer(cfg)
+}
+
+func TestNewEventHandler(t *testing.T) {
+	g1 := `4f9ec4f2-4180-11e9-a66c-8c1645350bc8:1-3`
+	g2 := `4f9ec4f2-4180-11e9-a66c-8c1645350bc8:4`
+
+	gs1, err := mysql.ParseMysqlGTIDSet(g1)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := gs1.Update(g2); err != nil {
+		log.Fatal(err)
+	}
+
+	log.Info("update gtid successfully ", gs1.String())
 }
 
 func TestBinlogReplication(t *testing.T) {
