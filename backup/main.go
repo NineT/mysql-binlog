@@ -85,7 +85,7 @@ func initiate() {
 	off := o
 	if o == nil {
 		pos, err := dump.MasterStatus()
-		if err != nil || pos.TrxGtid == nil {
+		if err != nil || pos.TrxGtid == "" {
 			log.Fatal(err, " or gtid is empty")
 		}
 		log.Info("start binlog position ", string(pos.TrxGtid))

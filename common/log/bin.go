@@ -38,7 +38,7 @@ type DataEvent struct {
 	Data     []byte                   // data
 	ExedGtid []byte                   // executed gtid eg. offset.IngGtid
 	TrxGtid  []byte                   // transaction gtid eg. Offset.sinGtid
-	BinFile  []byte                   // binlog file
+	BinFile  string                   // binlog file
 	IsDDL    bool                     // is ddl to
 }
 
@@ -116,15 +116,9 @@ func RecoverWriter(path, table string, curr, logPos uint32, desc *DataEvent) (*B
 	}
 
 	// open the file
-	f, err := os.OpenFile(fmt.Sprintf("%s/%s", w.Dir, w.Name), os.O_RDWR, inter.FileMode)
+	f, err := os.OpenFile(fmt.Sprintf("%s/%s", w.Dir, w.Name), os.O_APPEND|os.O_RDWR, inter.FileMode)
 	if err != nil {
 		log.Error(err)
-		return nil, err
-	}
-
-	// seek to the right offset
-	if _, err := f.Seek(int64(logPos), 0); err != nil {
-		log.Errorf("fseek %d error %v", logPos, err)
 		return nil, err
 	}
 
@@ -178,14 +172,14 @@ func GenQueryEvent(e *replication.BinlogEvent, ddl []byte, checksumAlg byte) (*r
 }
 
 // Binlog2Data: data event from binlog event for sinGtid, intGtid each one is an copy
-func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, sinGtid, intGtid []byte, binFile string, ddl bool) *DataEvent {
+func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, trxGtid, exedGtid []byte, binFile string, ddl bool) *DataEvent {
 	if checksumAlg == replication.BINLOG_CHECKSUM_ALG_CRC32 {
 		return &DataEvent{
 			Header:   ev.Header,
 			Data:     ev.RawData[replication.EventHeaderSize : len(ev.RawData)-CRC32Size],
-			ExedGtid: intGtid,
-			TrxGtid:  sinGtid,
-			BinFile:  []byte(binFile),
+			ExedGtid: exedGtid,
+			TrxGtid:  trxGtid,
+			BinFile:  binFile,
 			IsDDL:    ddl,
 		}
 	}
@@ -193,8 +187,9 @@ func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, sinGtid, intGtid
 	return &DataEvent{
 		Header:   ev.Header,
 		Data:     ev.RawData[replication.EventHeaderSize:],
-		ExedGtid: intGtid,
-		TrxGtid:  sinGtid,
+		ExedGtid: exedGtid,
+		TrxGtid:  trxGtid,
+		BinFile:  binFile,
 		IsDDL:    ddl,
 	}
 }
@@ -390,8 +385,8 @@ func (b *BinlogWriter) write(bt []byte) (int, error) {
 func (b *BinlogWriter) LastPos(cid int64, exed, trx []byte, time uint32) *meta.Offset {
 	return &meta.Offset{
 		CID:      cid,
-		ExedGtid: exed,
-		TrxGtid:  trx,
+		ExedGtid: string(exed),
+		TrxGtid:  string(trx),
 		BinFile:  fmt.Sprintf("%s/%s", b.Dir, b.Name),
 		BinPos:   b.logPos,
 		Time:     time,

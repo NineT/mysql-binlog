@@ -69,7 +69,7 @@ func NewMergeConfig(path string, off *meta.Offset, dump *cdb.MetaConf) (*MergeCo
 	// copy make sure that not modified by another
 	bt := make([]byte, len(off.ExedGtid))
 	copy(bt, off.ExedGtid)
-	off.TrxGtid = bt
+	off.TrxGtid = string(bt)
 	off.Counter = 0
 	off.Header = true
 	m.offsets.PushBack(off)
@@ -127,7 +127,7 @@ func (mc *MergeConfig) Start() {
 			var tmp *list.Element
 			for e := mc.offsets.Front(); e != nil; e = e.Next() {
 				o := e.Value.(*meta.Offset)
-				if bytes.EqualFold(o.TrxGtid, g) {
+				if strings.EqualFold(o.TrxGtid, string(g)) {
 					o.Counter --
 					if o.Counter == 0 {
 						// gtid event flush to binlog file
@@ -157,7 +157,7 @@ func (mc *MergeConfig) Start() {
 				}
 
 				// reset gtid
-				pre.Value.(*meta.Offset).ExedGtid = []byte(pg.String())
+				pre.Value.(*meta.Offset).ExedGtid = pg.String()
 			}
 		default:
 			// check write is block make sure that write cannot hang
@@ -235,8 +235,8 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 					// append offset
 					mc.offsets.PushBack(&meta.Offset{
 						CID:      mc.cid,
-						TrxGtid:  mc.latestGtid.TrxGtid,
-						ExedGtid: mc.latestGtid.TrxGtid, // here executed gtid equals = transaction gtid
+						TrxGtid:  string(mc.latestGtid.TrxGtid),
+						ExedGtid: string(mc.latestGtid.TrxGtid), // here executed gtid equals = transaction gtid
 						Counter:  len(tbs),
 						Header:   false,
 						Time:     ev.Header.Timestamp,
@@ -257,8 +257,8 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 					// append offset
 					mc.offsets.PushBack(&meta.Offset{
 						CID:      mc.cid,
-						TrxGtid:  mc.latestGtid.TrxGtid,
-						ExedGtid: mc.latestGtid.TrxGtid, // newly then make executed gtid = transaction gtid
+						TrxGtid:  string(mc.latestGtid.TrxGtid),
+						ExedGtid: string(mc.latestGtid.TrxGtid), // newly then make executed gtid = transaction gtid
 						Counter:  len(mc.tableHandlers),
 						Header:   false,
 						Time:     ev.Header.Timestamp,
@@ -297,8 +297,8 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 
 		mc.offsets.PushBack(&meta.Offset{
 			CID:      mc.cid,
-			TrxGtid:  mc.latestGtid.TrxGtid,
-			ExedGtid: mc.latestGtid.TrxGtid, // newly then make executed gtid = transaction gtid
+			TrxGtid:  string(mc.latestGtid.TrxGtid),
+			ExedGtid: string(mc.latestGtid.TrxGtid), // newly then make executed gtid = transaction gtid
 			Counter:  len(mc.relatedTables),
 			Header:   false,
 			Time:     ev.Header.Timestamp,

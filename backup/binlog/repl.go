@@ -29,17 +29,17 @@ type TableEventHandler struct {
 
 // NewEventHandler new event handler for binlog writer
 func NewEventHandler(path, table string, curr uint32, cid int64, desc *blog.DataEvent, after *final.After, gch chan []byte) (*TableEventHandler, error) {
-	log.Debug("new event handler for binlog writer and index writer")
+	log.Debug("new event handler")
 
 	var binW *blog.BinlogWriter
 	var idxW *blog.IndexWriter
 	var off *meta.Offset
 
 	dir := fmt.Sprintf("%s%s", path, table)
-	log.Debug("binlog and index writer dir ", dir)
+	log.Debugf("binlog and index writer dir %s/%d.log", dir, curr)
 
 	if blog.WriterExists(path, table, curr) && blog.IndexExists(dir, curr) {
-
+		log.Debugf("writer {%s/%d.log} exists and index{%s/%s.index} exists as well", dir, curr, dir, curr)
 		// index exists then using index
 		iw, err := blog.RecoverIndex(dir, curr)
 		if err != nil {
@@ -65,6 +65,7 @@ func NewEventHandler(path, table string, curr uint32, cid int64, desc *blog.Data
 		binW = bw
 		idxW = iw
 	} else {
+		log.Debugf("create new writer{%s/%d.log} and new index {%s/%d.log}", dir, curr, dir, curr)
 		// index not exist as it is new for index writer and new for binlog writer as well if any one writer not exist then truncate file
 		// binlog writer not exit never will the index writer exists
 		bw, err := blog.NewBinlogWriter(path, table, curr, desc)
@@ -134,10 +135,10 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 	if h.offset != nil {
 		// current offset for
 		co := &meta.Offset{
-			ExedGtid: t.ExedGtid,
-			TrxGtid:  t.TrxGtid,
+			ExedGtid: string(t.ExedGtid),
+			TrxGtid:  string(t.TrxGtid),
 			Time:     t.Header.Timestamp,
-			BinFile:  string(t.BinFile),
+			BinFile:  t.BinFile,
 			BinPos:   t.Header.LogPos,
 		}
 

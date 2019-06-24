@@ -21,7 +21,7 @@ index file is for gtid -> binlog offset and timestamp etc.
 
 const (
 	// BinlogIndexFile const name
-	BinlogIndexFile = "bin.index"
+	BinlogIndexFile = ".index"
 )
 
 // IndexOffset including origin MySQL binlog offset and generated binlog offset
@@ -77,14 +77,9 @@ func RecoverIndex(dir string, curr uint32) (*IndexWriter, error) {
 	}
 
 	// open the file
-	f, err := os.OpenFile(name, os.O_RDWR, inter.FileMode)
+	f, err := os.OpenFile(name, os.O_APPEND|os.O_RDWR, inter.FileMode)
 	if err != nil {
 		log.Error(err)
-		return nil, err
-	}
-
-	if _, err := f.Seek(0, 2); err != nil {
-		log.Errorf("fseek tail error %v", err)
 		return nil, err
 	}
 
@@ -209,10 +204,8 @@ func (w *IndexWriter) Latest() (*IndexOffset, error) {
 		}
 
 		if right {
-			log.Debug(string(buff[idx+1:]))
 			data.PushFront(buff[idx+1:])
 		} else {
-			log.Debug(string(buff))
 			// put buffer to the front
 			data.PushFront(buff)
 			start = start - rbs

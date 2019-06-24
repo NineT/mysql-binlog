@@ -210,5 +210,9 @@ func CreateFile(f string) (*os.File, error) {
 // Exists return true means exists and file not empty then else return false
 func Exists(f string) bool {
 	st, err := os.Stat(f)
-	return os.IsExist(err) && st.Size() != 0
+	if err == nil {
+		return st.Size() != 0
+	}
+
+	return false
 }
