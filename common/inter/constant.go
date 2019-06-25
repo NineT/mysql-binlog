@@ -1,12 +1,17 @@
 package inter
 
 import (
+	"bytes"
+	"container/list"
 	"fmt"
-	"git.jd.com/binlake/common/inter"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zssky/log"
+
+	"git.jd.com/binlake/common/inter"
 )
 
 // FileType 定义的文件类型 {day, hour, min, sec}
@@ -215,4 +220,102 @@ func Exists(f string) bool {
 	}
 
 	return false
+}
+
+// Tail data for file
+func Tail(name string) ([]byte, error) {
+	st, err := os.Stat(name) //os.Stat获取文件信息
+	flag := true
+	if err != nil {
+		if os.IsExist(err) {
+			flag = true
+		}
+		flag = false
+	}
+
+	if !flag {
+		log.Warnf("file %s not exists", name)
+		return nil, nil
+	}
+
+	// file size
+	size := int64(st.Size())
+	if size == 0 {
+		// file size is empty
+		log.Warnf("file{%s} is empty ", name)
+		return nil, nil
+	}
+
+	f, err := os.OpenFile(name, os.O_RDONLY, inter.FileMode)
+	if err != nil {
+		log.Errorf("open file{%s} error{%v}", name, err)
+		return nil, err
+	}
+	defer f.Close()
+
+	data := list.New()
+
+	// default read buffer size
+	rbs := int64(100)
+
+	// start position
+	start := int64(-1*rbs - 1) // skip the last io.EOF
+
+	// flag
+	right := false
+	for !right {
+		if start+size <= 0 {
+			// read to start
+			rbs = start + rbs + size
+			start = -1 * size
+		}
+
+		log.Debugf("[%d, %d]", start, start - size)
+
+		if _, err := f.Seek(start, 2); err != nil {
+			log.Errorf("fseek (%d, 2) error %v", start, err)
+			return nil, err
+		}
+
+		// buffer for reading cache
+		buff := make([]byte, rbs)
+
+		if _, err := f.Read(buff); err != nil {
+			log.Errorf("read bytes from file{%s} error{%v}", name, err)
+			return nil, err
+		}
+
+		idx := 0
+		for i, b := range buff {
+			switch {
+			case start+size == 0:
+				idx = -1
+				right = true
+			case b == '\n':
+				idx = i
+				// get the right position
+				right = true
+			}
+		}
+
+		if right {
+			data.PushFront(buff[idx+1:])
+		} else {
+			// put buffer to the front
+			data.PushFront(buff)
+			start = start - rbs
+		}
+	}
+
+	log.Debugf("total file size{%d} start{%d}", st.Size(), start)
+
+	b := bytes.NewBuffer(nil)
+	for e := data.Front(); e != nil; e = e.Next() {
+		if _, err := b.Write(e.Value.([]byte)); err != nil {
+			log.Errorf("composite bytes from file{%s} error %v", name, err)
+			return nil, err
+		}
+	}
+
+	return b.Bytes(), nil
 }

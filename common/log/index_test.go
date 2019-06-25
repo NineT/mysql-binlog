@@ -31,7 +31,7 @@ func TestIndexWriter_Write(t *testing.T) {
 			DumpPos:  4,
 			Local: &meta.Offset{
 				CID:      100,
-				ExedGtid: []byte("9042c001-a53d-4ffd-ab93-9c7ac202c2cb:1-1030030"),
+				ExedGtid: "9042c001-a53d-4ffd-ab93-9c7ac202c2cb:1-1030030",
 				Time:     2482974972 + uint32(i)*100,
 				BinFile:  "2482974972.log",
 				BinPos:   28000 + uint32(i)*100,
@@ -50,7 +50,7 @@ func TestIndexWriter_Latest(t *testing.T) {
 
 	defer w.Close()
 
-	o, err := w.Latest()
+	o, err := w.Tail()
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -375,7 +375,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 
 // newHandler generate table handler
 func (mc *MergeConfig) newHandler(curr uint32, table string, gch chan []byte) {
-	log.Info("table binlog file path with current ", fmt.Sprintf("%s%s%d.log", mc.SnapshotPath, table, curr))
+	log.Info("table binlog file path with current ", fmt.Sprintf("%s/%s/%d.log", mc.SnapshotPath, table, curr))
 
 	evh, err := binlog.NewEventHandler(mc.SnapshotPath, table, curr, mc.cid, blog.Binlog2Data(mc.formatDesc, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false), mc.After, gch)
 	if err != nil {

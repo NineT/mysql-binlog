@@ -8,6 +8,7 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/zssky/log"
 
@@ -30,6 +31,9 @@ const (
 
 	// 	StmtEndFlag        = 1
 	StmtEndFlag = 1
+
+	// log suffix
+	LogSuffix = ".log"
 )
 
 // DataEvent
@@ -46,6 +50,7 @@ type DataEvent struct {
 type BinlogWriter struct {
 	Name       string                   // FileName file name
 	Dir        string                   // table write path
+	FullName   string                   // full name
 	Desc       *DataEvent               // desc event
 	lastHeader *replication.EventHeader // lastHeader
 	f          *os.File                 // WriteEvent WriteEvent 生成binlog
@@ -56,24 +61,22 @@ type BinlogWriter struct {
 	logPos     uint32                   // logPos 文件位置
 }
 
-// WriterExists belong to writer property
-func WriterExists(path, table string, curr uint32) bool {
-	return inter.Exists(fmt.Sprintf("%s%s/%d.log", path, table, curr))
-}
-
 // NewBinlogWriter new binlog writer for binlog write
 func NewBinlogWriter(path, table string, curr uint32, desc *DataEvent) (*BinlogWriter, error) {
+	path = strings.TrimSuffix(path, "/")
+
 	w := &BinlogWriter{
-		Name:     fmt.Sprintf("%d.log", curr),
-		Dir:      fmt.Sprintf("%s%s", path, table),
+		Name:     fmt.Sprintf("%d%s", curr, LogSuffix),
+		Dir:      fmt.Sprintf("%s/%s", path, table),
 		Desc:     desc,
 		compress: false,
 		xid:      0,
 		crc:      0,
 		logPos:   0,
 	}
+	w.FullName = fmt.Sprintf("%s/%s", w.Dir, w.Name)
 
-	f, err := inter.CreateFile(fmt.Sprintf("%s/%s", w.Dir, w.Name))
+	f, err := inter.CreateFile(w.FullName)
 	if err != nil {
 		log.Error(err)
 		return nil, err
@@ -105,7 +108,7 @@ func NewBinlogWriter(path, table string, curr uint32, desc *DataEvent) (*BinlogW
 // RecoverWriter using the origin writer to the log file
 func RecoverWriter(path, table string, curr, logPos uint32, desc *DataEvent) (*BinlogWriter, error) {
 	w := &BinlogWriter{
-		Name:       fmt.Sprintf("%d.log", curr),
+		Name:       fmt.Sprintf("%d%s", curr, LogSuffix),
 		Dir:        fmt.Sprintf("%s%s", path, table),
 		Desc:       desc,
 		compress:   false,
@@ -115,8 +118,10 @@ func RecoverWriter(path, table string, curr, logPos uint32, desc *DataEvent) (*B
 		crc:        0,
 	}
 
+	w.FullName = fmt.Sprintf("%s/%s", w.Dir, w.Name)
+
 	// open the file
-	f, err := os.OpenFile(fmt.Sprintf("%s/%s", w.Dir, w.Name), os.O_APPEND|os.O_RDWR, inter.FileMode)
+	f, err := os.OpenFile(w.FullName, os.O_APPEND|os.O_RDWR, inter.FileMode)
 	if err != nil {
 		log.Error(err)
 		return nil, err
@@ -199,14 +204,14 @@ func (b *BinlogWriter) Close() {
 	// flush zlib writer
 	if b.compress && b.iw != nil {
 		if err := b.iw.(*zlib.Writer).Flush(); err != nil {
-			log.Error("flush zlib writer ", fmt.Sprintf("%s/%s", b.Dir, b.Name), " error")
+			log.Error("flush zlib writer ", b.FullName, " error")
 		}
 	}
 
 	// close binlog file
 	if err := b.f.Close(); err != nil {
 		// do something if close file error
-		log.Error("close binlog file ", fmt.Sprintf("%s/%s", b.Dir, b.Name), " error")
+		log.Error("close binlog file ", b.FullName, " error")
 	}
 	b.reset()
 }
@@ -224,7 +229,7 @@ func (b *BinlogWriter) flushLogs(curr uint32) error {
 	// write rotate event
 	r := &replication.RotateEvent{
 		Position:    uint64(b.logPos),
-		NextLogName: []byte(fmt.Sprintf("%d.log", curr)),
+		NextLogName: []byte(fmt.Sprintf("%d%s", curr, LogSuffix)),
 	}
 	bts := r.Encode()
 
@@ -241,7 +246,7 @@ func (b *BinlogWriter) flushLogs(curr uint32) error {
 	// flush zlib writer
 	if b.compress && b.iw != nil {
 		if err := b.iw.(*zlib.Writer).Flush(); err != nil {
-			log.Error("flush zlib writer ", fmt.Sprintf("%s/%s", b.Dir, b.Name), " error")
+			log.Error("flush zlib writer ", b.FullName, " error")
 			return err
 		}
 	}
@@ -249,13 +254,14 @@ func (b *BinlogWriter) flushLogs(curr uint32) error {
 	// close binlog file
 	if err := b.f.Close(); err != nil {
 		// do something if close file error
-		log.Error("close binlog file ", fmt.Sprintf("%s/%s", b.Dir, b.Name), " error")
+		log.Error("close binlog file ", b.FullName, " error")
 		return err
 	}
 
-	b.Name = fmt.Sprintf("%d.log", curr)
+	b.Name = fmt.Sprintf("%d%s", curr, LogSuffix)
+	b.FullName = fmt.Sprintf("%s/%s", b.Dir, b.Name)
 
-	f, err := inter.CreateFile(fmt.Sprintf("%s/%s", b.Dir, b.Name))
+	f, err := inter.CreateFile(b.FullName)
 	if err != nil {
 		log.Error(err)
 		return err

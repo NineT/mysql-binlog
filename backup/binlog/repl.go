@@ -25,6 +25,7 @@ type TableEventHandler struct {
 	offset    *meta.Offset         // offset for local binlog file
 	binWriter *blog.BinlogWriter   // binlog writer
 	idxWriter *blog.IndexWriter    // index writer
+	flWriter  *blog.LogList        // file list writer
 }
 
 // NewEventHandler new event handler for binlog writer
@@ -33,24 +34,40 @@ func NewEventHandler(path, table string, curr uint32, cid int64, desc *blog.Data
 
 	var binW *blog.BinlogWriter
 	var idxW *blog.IndexWriter
+	var flW *blog.LogList
 	var off *meta.Offset
 
 	dir := fmt.Sprintf("%s%s", path, table)
-	log.Debugf("binlog and index writer dir %s/%d.log", dir, curr)
+	log.Debugf("binlog and index writer dir %s/%d%s", dir, curr, blog.LogSuffix)
 
-	if blog.WriterExists(path, table, curr) && blog.IndexExists(dir, curr) {
-		log.Debugf("writer {%s/%d.log} exists and index{%s/%s.index} exists as well", dir, curr, dir, curr)
+	if blog.ListExists(dir) { // list exist and size is not empty
+		log.Debug("using file list")
+		lw, err := blog.RecoverList(dir)
+		if err != nil {
+			log.Errorf("recover list log from directory{%s} error{%v}", dir, err)
+			return nil, err
+		}
+
+		t, err := lw.Tail()
+		if err != nil {
+			log.Errorf("log list file{%s} tail error{%v}", lw.FullName, err)
+			return nil, err
+		}
+
+		// reset timestamp
+		curr = uint32(t)
+
 		// index exists then using index
 		iw, err := blog.RecoverIndex(dir, curr)
 		if err != nil {
-			log.Errorf("recover index writer{%s/%d} error %v", dir, curr, err)
+			log.Errorf("recover index writer{%s/%d%s} error{%v}", dir, curr, blog.IndexSuffix, err)
 			return nil, err
 		}
 
 		// size is not 0
-		o, err := iw.Latest()
+		o, err := iw.Tail()
 		if err != nil {
-			log.Errorf("get latest offset for index writer{%s/%d} error %v", dir, curr, err)
+			log.Errorf("get latest offset for index writer{%s/%d%s} error %v", dir, curr, blog.IndexSuffix, err)
 			return nil, err
 		}
 
@@ -58,32 +75,45 @@ func NewEventHandler(path, table string, curr uint32, cid int64, desc *blog.Data
 
 		bw, err := blog.RecoverWriter(path, table, curr, o.Local.BinPos, desc)
 		if err != nil {
-			log.Errorf("recover writer{%s/%d.log} using exist index{%s/%d} error %v", dir, curr, dir, curr, err)
+			log.Errorf("recover writer{%s/%d%s} using exist index{%s/%d%s} error %v", dir, blog.LogSuffix, curr, dir, curr, blog.IndexSuffix, err)
 			return nil, err
 		}
 
 		binW = bw
 		idxW = iw
+		flW = lw
 	} else {
-		log.Debugf("create new writer{%s/%d.log} and new index {%s/%d.log}", dir, curr, dir, curr)
+		log.Debugf("create new writer{%s/%d%s} and new index {%s/%d%s}", dir, curr, blog.LogSuffix, dir, curr, blog.LogSuffix)
 		// index not exist as it is new for index writer and new for binlog writer as well if any one writer not exist then truncate file
 		// binlog writer not exit never will the index writer exists
 		bw, err := blog.NewBinlogWriter(path, table, curr, desc)
 		if err != nil {
-			log.Errorf("create binlog writer{%s/%d.log} error %v", dir, curr, err)
+			log.Errorf("create binlog writer{%s/%d%s} error %v", dir, curr, blog.LogSuffix, err)
 			return nil, err
 		}
 
 		// create new index writer for bw.dir
 		iw, err := blog.NewIndexWriter(bw.Dir, curr)
 		if err != nil {
-			log.Errorf("create index writer for binlog {%s/%d.log} error %v", dir, curr, err)
+			log.Errorf("create index writer for binlog {%s/%d%s} error %v", dir, curr, blog.LogSuffix, err)
+			return nil, err
+		}
+
+		lw, err := blog.NewLogList(dir)
+		if err != nil {
+			log.Errorf("create new log list file on dir{%s} error{%v}", dir, err)
+			return nil, err
+		}
+
+		if err := lw.Write([]byte(bw.Name)); err != nil {
+			log.Errorf("write log file name{%s} to log file list{%s} error{%v}", bw.FullName, lw.FullName, err)
 			return nil, err
 		}
 
 		// bin writer and index writer
 		binW = bw
 		idxW = iw
+		flW = lw
 	}
 
 	return &TableEventHandler{
@@ -97,6 +127,7 @@ func NewEventHandler(path, table string, curr uint32, cid int64, desc *blog.Data
 		offset:    off, // offset for binlog file
 		binWriter: binW,
 		idxWriter: idxW,
+		flWriter:  flW,
 	}, nil
 }
 
@@ -162,7 +193,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 
 		// write gtid
 		if err := h.binWriter.WriteEvent(t); err != nil {
-			log.Errorf("xid event write to binlog file{%s/%s} error{%v}", h.binWriter.Dir, h.binWriter.Name, err)
+			log.Errorf("xid event write to binlog file{%s} error{%v}", h.binWriter.FullName, err)
 			return err
 		}
 
@@ -182,7 +213,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 		// new file
 		nf, err := h.binWriter.CheckFlush(t.Header.Timestamp)
 		if err != nil {
-			log.Errorf("check binlog{%s/%s} flush error %v", h.binWriter.Dir, h.binWriter.Name, err)
+			log.Errorf("check binlog{%s} flush error %v", h.binWriter.FullName, err)
 			return err
 		}
 
@@ -194,6 +225,11 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 				return err
 			}
 			h.idxWriter = iw
+
+			if err := h.flWriter.Write([]byte(h.binWriter.Name)); err != nil {
+				log.Errorf("write file name{%s} to file list{%s} error{%v}", h.binWriter.FullName, h.flWriter.FullName, err)
+				return err
+			}
 		}
 
 		// return gtid
@@ -202,7 +238,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 		if t.IsDDL { // only ddl then take it as commit event to check whether it is the right to flush logs
 			// write gtid
 			if err := h.binWriter.WriteEvent(t); err != nil {
-				log.Errorf("write query event into binlog file{%s/%s} error %v", h.binWriter.Dir, h.binWriter.Name, err)
+				log.Errorf("write query event into binlog file{%s} error %v", h.binWriter.FullName, err)
 				return err
 			}
 
@@ -215,14 +251,14 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 				DumpPos:  pos,
 				Local:    h.offset,
 			}); err != nil {
-				log.Errorf("write query event index{%s/%s} error{%v}", h.binWriter.Dir, h.binWriter.Name, err)
+				log.Errorf("write query event index{%s} error{%v}", h.binWriter.FullName, err)
 				return err
 			}
 
 			// new file
 			nf, err := h.binWriter.CheckFlush(t.Header.Timestamp)
 			if err != nil {
-				log.Errorf("check binlog file{%s/%s} flush error{%v}", h.binWriter.Dir, h.binWriter.Name, err)
+				log.Errorf("check binlog file{%s} flush error{%v}", h.binWriter.FullName, err)
 				return err
 			}
 
@@ -230,7 +266,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 				// flush index file
 				iw, err := h.idxWriter.FlushIndex(t.Header.Timestamp)
 				if err != nil {
-					log.Errorf("flush index writer{%s} error %v", h.idxWriter.Name, err)
+					log.Errorf("flush index writer{%s} error %v", h.idxWriter.FullName, err)
 					return err
 				}
 				h.idxWriter = iw
@@ -241,14 +277,14 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 		} else {
 			// write query event as well
 			if err := h.binWriter.WriteEvent(t); err != nil {
-				log.Errorf("write query event{%s} but not ddl on writer{%s/%s} error{%v}", string(t.Data), h.binWriter.Dir, h.binWriter.Name, err)
+				log.Errorf("write query event{%s} but not ddl on writer{%s} error{%v}", string(t.Data), h.binWriter.FullName, err)
 				return err
 			}
 		}
 	default:
 		// write event
 		if err := h.binWriter.WriteEvent(t); err != nil {
-			log.Errorf("write event {%s/%s} error{%v}", h.binWriter.Dir, h.binWriter.Name, err)
+			log.Errorf("write event {%s} error{%v}", h.binWriter.Dir, h.binWriter.FullName, err)
 			return err
 		}
 	}
