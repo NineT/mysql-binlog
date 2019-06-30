@@ -13,7 +13,6 @@ import (
 	"github.com/satori/go.uuid"
 	"github.com/zssky/log"
 
-	cdb "github.com/mysql-binlog/common/db"
 	"github.com/mysql-binlog/common/final"
 	"github.com/mysql-binlog/common/inter"
 	blog "github.com/mysql-binlog/common/log"
@@ -25,33 +24,34 @@ import (
 
 // MergeConfig merge conf
 type MergeConfig struct {
-	SnapshotPath    string                               // 数据 kv 存储路径 快照存储路径
-	After           *final.After                         // After math for merge
-	DumpMySQLConfig *cdb.MetaConf                        // DumpMySQLConfig dump mysql 的操作
-	cid             int64                                // cluster id
-	binFile         string                               // binlog file
-	lastEventTime   uint32                               // last event time:
-	lastFlags       uint16                               // last flag
-	table           string                               // 注意table是传值 不是引用 临时变量 存储事件对应的表名
-	formatDesc      *replication.BinlogEvent             // format description event
-	checksumAlg     byte                                 // checksumAlg
-	latestBegin     *blog.DataEvent                      // begin for latest
-	gtid            mysql.GTIDSet                        // current integrate gtid
-	latestGtid      *blog.DataEvent                      // gtid for latest
-	relatedTables   map[string]string                    // relatedTables gtid related tables
-	tableHandlers   map[string]*binlog.TableEventHandler // tableHandlers 每张表的操作
-	gc              chan []byte                          // gtid channel using for gtid channels
-	offsets         *list.List                           // offsets for gtid list
+	After         *final.After                         // After math for merge
+	path          string                               // 数据 kv 存储路径 快照存储路径
+	ins           *meta.Instance                       // MySQL instance for host, port, user, password
+	syncer        *replication.BinlogSyncer            // binlog syncer
+	cid           int64                                // cluster id
+	binFile       string                               // binlog file
+	lastEventTime uint32                               // last event time:
+	lastFlags     uint16                               // last flag
+	table         string                               // 注意table是传值 不是引用 临时变量 存储事件对应的表名
+	formatDesc    *replication.BinlogEvent             // format description event
+	checksumAlg   byte                                 // checksumAlg
+	latestBegin   *blog.DataEvent                      // begin for latest
+	gtid          mysql.GTIDSet                        // current integrate gtid
+	latestGtid    *blog.DataEvent                      // gtid for latest
+	relatedTables map[string]string                    // relatedTables gtid related tables
+	tableHandlers map[string]*binlog.TableEventHandler // tableHandlers 每张表的操作
+	gc            chan []byte                          // gtid channel using for gtid channels
+	offsets       *list.List                           // offsets for gtid list
 }
 
 // NewMergeConfig new merge config
-func NewMergeConfig(path string, off *meta.Offset, dump *cdb.MetaConf) (*MergeConfig, error) {
+func NewMergeConfig(path string, off *meta.Offset, i *meta.Instance) (*MergeConfig, error) {
 	m := &MergeConfig{
-		SnapshotPath:    inter.StdPath(path),
-		DumpMySQLConfig: dump,
-		relatedTables:   make(map[string]string),
-		tableHandlers:   make(map[string]*binlog.TableEventHandler),
-		gc:              make(chan []byte, inter.BufferSize),
+		path:          inter.StdPath(path),
+		ins:           i,
+		relatedTables: make(map[string]string),
+		tableHandlers: make(map[string]*binlog.TableEventHandler),
+		gc:            make(chan []byte, inter.BufferSize),
 	}
 
 	g, err := mysql.ParseMysqlGTIDSet(string(off.ExedGtid))
@@ -87,14 +87,14 @@ func (mc *MergeConfig) Start() {
 	cfg := replication.BinlogSyncerConfig{
 		ServerID: 1011,
 		Flavor:   "mysql",
-		Host:     mc.DumpMySQLConfig.Host,
-		Port:     uint16(mc.DumpMySQLConfig.Port),
-		User:     mc.DumpMySQLConfig.User,
-		Password: mc.DumpMySQLConfig.Password,
+		Host:     mc.ins.Host,
+		Port:     uint16(mc.ins.Port),
+		User:     mc.ins.User,
+		Password: mc.ins.Password,
 	}
 
-	syncer := replication.NewBinlogSyncer(cfg)
-	defer syncer.Close()
+	mc.syncer = replication.NewBinlogSyncer(cfg)
+	defer mc.syncer.Close()
 
 	var streamer *replication.BinlogStreamer
 	var err error
@@ -104,7 +104,7 @@ func (mc *MergeConfig) Start() {
 		log.Fatal(err)
 	}
 
-	if streamer, err = syncer.StartSyncGTID(gs); err != nil {
+	if streamer, err = mc.syncer.StartSyncGTID(gs); err != nil {
 		log.Error("error sync data using gtid ", err)
 		log.Fatal(err)
 	}
@@ -180,6 +180,9 @@ func (mc *MergeConfig) Start() {
 
 // Close close when merge finished
 func (mc *MergeConfig) Close() {
+	// close syncer again
+	mc.syncer.Close()
+
 	mc.closeHandler()
 }
 
@@ -375,9 +378,9 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 
 // newHandler generate table handler
 func (mc *MergeConfig) newHandler(curr uint32, table string, gch chan []byte) {
-	log.Info("table binlog file path with current ", fmt.Sprintf("%s/%s/%d.log", mc.SnapshotPath, table, curr))
+	log.Info("table binlog file path with current ", fmt.Sprintf("%s/%s/%d.log", mc.path, table, curr))
 
-	evh, err := binlog.NewEventHandler(mc.SnapshotPath, table, curr, mc.cid, blog.Binlog2Data(mc.formatDesc, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false), mc.After, gch)
+	evh, err := binlog.NewEventHandler(mc.path, table, curr, mc.cid, blog.Binlog2Data(mc.formatDesc, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false), mc.After, gch)
 	if err != nil {
 		debug.PrintStack()
 		panic(err)
@@ -417,4 +420,14 @@ func (mc *MergeConfig) writeQueryEvent(table []byte, ev *replication.BinlogEvent
 	h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
 
 	log.Debugf("finish writeQueryEvent")
+}
+
+// NewlyOffset for binlog dump position
+func (mc *MergeConfig) NewlyOffset() *meta.Offset {
+	return mc.offsets.Front().Value.(*meta.Offset)
+}
+
+// ClusterID for dump
+func (mc *MergeConfig) GetClusterID() int64 {
+	return mc.cid
 }

@@ -1,8 +1,12 @@
 package meta
 
 import (
+	"database/sql"
+	"fmt"
 	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
 	"github.com/zssky/log"
+	"strconv"
+	"strings"
 )
 
 // Offset binlog offset write to meta
@@ -16,6 +20,20 @@ type Offset struct {
 	Counter  int    `json:"-"`         // counter
 	Header   bool   `json:"-"`         // header flag
 }
+
+// Instance information for mysql
+type Instance struct {
+	CID      int64  `json:"clusterid"` // cluster id
+	Host     string `json:"host"`      // MySQL host
+	Port     int    `json:"port"`      // MySQL port
+	User     string `json:"user"`      // mysql dump user
+	Password string `json:"password"`  // mysql dump password
+}
+
+const (
+	// offset set key in etcd
+	OffsetKey = "offset"
+)
 
 // LessEqual whether the o{mean the current offset} is <= another offset
 func LessEqual(o1, o2 *Offset) (bool, error) {
@@ -53,12 +71,108 @@ func LessEqual(o1, o2 *Offset) (bool, error) {
 
 // Meta data interface
 type IMeta interface {
-	// Read meta offset from meta storage
-	Read(k interface{}) (*Offset, error)
+	// ReadOffset meta offset from meta storage
+	ReadOffset(k interface{}) (*Offset, error)
 
-	// Save node to storage
-	Save(offset *Offset) error
+	// ReadInstance for binlog dump {including host, port, user, password}
+	ReadInstance(k interface{}) (*Instance, error)
 
-	// Delete node from storage
-	Delete(k interface{}) error
+	// SaveOffset node to storage
+	SaveOffset(offset *Offset) error
+
+	// SaveInstance node to storage
+	SaveInstance(ins *Instance) error
+
+	// DeleteOffset node from storage
+	DeleteOffset(k interface{}) error
+
+	// DeleteInstance node from storage
+	DeleteInstance(k interface{}) error
+}
+
+// Master status
+func (i *Instance) MasterStatus() (*Offset, error) {
+	// SET MAX ALLOWED PACKAGE SIZE == 0 THEN =>  https://github.com/go-sql-driver/mysql/driver.go:142
+	/***
+		if mc.cfg.MaxAllowedPacket > 0 {
+		mc.maxAllowedPacket = mc.cfg.MaxAllowedPacket
+	} else {
+		// Get max allowed packet size
+		maxap, err := mc.getSystemVar("max_allowed_packet")
+		if err != nil {
+			mc.Close()
+			return nil, err
+		}
+		mc.maxAllowedPacket = stringToInt(maxap) - 1
+	}
+	if mc.maxAllowedPacket < maxPacketSize {
+		mc.maxWriteSize = mc.maxAllowedPacket
+	}
+	 */
+	url := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?maxAllowedPacket=0", i.User, i.Password, i.Host, i.Port, "test")
+	c, err := sql.Open("mysql", url)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+
+	rst, err := c.Query("show master status")
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+	defer rst.Close()
+
+	var f, pos, doDB, igDB, gtid string
+
+	for rst.Next() {
+		rst.Scan(&f, &pos, &doDB, &igDB, &gtid)
+	}
+
+	g, err := mysql.ParseMysqlGTIDSet(gtid)
+	if err != nil {
+		return nil, err
+	}
+
+	p, err := strconv.Atoi(pos)
+	if err != nil {
+		log.Errorf("show master status error for binlog position %v", err)
+		return nil, err
+	}
+
+	return &Offset{
+		ExedGtid: g.String(),
+		TrxGtid:  g.String(),
+		BinFile:  f,
+		BinPos:   uint32(p),
+	}, nil
+}
+
+// HasGTID check
+func (i *Instance) HasGTID() bool {
+	url := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?maxAllowedPacket=0", i.User, i.Password, i.Host, i.Port, "mysql")
+	c, err := sql.Open("mysql", url)
+	if err != nil {
+		return false
+	}
+	defer c.Close()
+
+	rst, err := c.Query("show variables like \"%gtid_mode%\"")
+	if err != nil {
+		log.Error(err)
+		return false
+	}
+	defer rst.Close()
+
+	var mode, val string
+
+	for rst.Next() {
+		rst.Scan(&mode, &val)
+	}
+
+	if strings.EqualFold(val, "ON") {
+		return true
+	}
+
+	return false
 }
