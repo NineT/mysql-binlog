@@ -25,6 +25,7 @@ import (
 // MergeConfig merge conf
 type MergeConfig struct {
 	After         *final.After                         // After math for merge
+	err           error                                // error for status
 	path          string                               // 数据 kv 存储路径 快照存储路径
 	ins           *meta.Instance                       // MySQL instance for host, port, user, password
 	syncer        *replication.BinlogSyncer            // binlog syncer
@@ -116,6 +117,7 @@ func (mc *MergeConfig) Start() {
 		select {
 		case e := <-mc.After.Errs:
 			// wait for errors
+			mc.err = e.(error)
 			panic(e)
 		case g, hasMore := <-mc.gc:
 			if !hasMore {
@@ -427,7 +429,7 @@ func (mc *MergeConfig) NewlyOffset() *meta.Offset {
 	return mc.offsets.Front().Value.(*meta.Offset)
 }
 
-// ClusterID for dump
-func (mc *MergeConfig) GetClusterID() int64 {
-	return mc.cid
+// Status for dump status: nil is normal and occur error means something wrong
+func (mc *MergeConfig) Status() error {
+	return mc.err
 }

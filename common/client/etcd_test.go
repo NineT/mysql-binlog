@@ -60,7 +60,11 @@ func TestEtcdMeta_DeleteOffset(t *testing.T) {
 		log.Fatal(err)
 	}
 
-	log.Fatal(m.DeleteOffset(0))
+	if err := m.DeleteInstance(100); err != nil {
+		log.Fatal(err)
+	}
+
+	log.Info("remove instance success")
 }
 
 func TestEtcdMeta_DeleteInstance(t *testing.T) {
@@ -87,4 +91,19 @@ func TestEtcdMeta_SaveInstance(t *testing.T) {
 	}); err != nil {
 		log.Fatal(err)
 	}
+	log.Info("save instance success")
+}
+
+func TestEtcdMeta_ReadInstance(t *testing.T) {
+	m, err := NewEtcdMeta("http://127.0.0.1:2379", "v1")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	i, err := m.ReadInstance(100)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Info(i)
 }

@@ -222,6 +222,20 @@ func (h *HttpServer) heartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// status error
+	if err := h.mcs[req.CId].Status(); err != nil {
+		resp.Message = fmt.Sprintf("cluster id{%d} error{%v}", req.CId, err)
+		resp.Code = 1000
+		log.Error(resp.Message)
+
+		// close dump for MySQL
+		h.mcs[req.CId].Close()
+
+		// remove cluster id dump status
+		delete(h.mcs, req.CId)
+		return
+	}
+
 	// cluster id
 	resp.CId = req.CId
 	resp.Offset = h.mcs[req.CId].NewlyOffset()
@@ -244,6 +258,20 @@ func (h *HttpServer) start(w http.ResponseWriter, r *http.Request) {
 			log.Errorf("writer ok package to response-writer error %v", err)
 		}
 	}()
+
+	// already on dump status for cluster id
+	if len(h.mcs) != 0 {
+		var cid int64
+		for c := range h.mcs {
+			cid = c
+		}
+
+		// already on dump status then let it go
+		resp.Message = fmt.Sprintf("already on dumping status for cluster id{%d}", cid)
+		resp.Code = 1000
+		log.Error(resp.Message)
+		return
+	}
 
 	req, err := readRequest(r)
 	if err != nil {
