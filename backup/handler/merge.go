@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
@@ -25,6 +26,7 @@ import (
 // MergeConfig merge conf
 type MergeConfig struct {
 	After         *final.After                         // After math for merge
+	closed        int32                                // closed flag
 	err           error                                // error for status
 	path          string                               // 数据 kv 存储路径 快照存储路径
 	ins           *meta.Instance                       // MySQL instance for host, port, user, password
@@ -48,6 +50,7 @@ type MergeConfig struct {
 // NewMergeConfig new merge config
 func NewMergeConfig(path string, off *meta.Offset, i *meta.Instance) (*MergeConfig, error) {
 	m := &MergeConfig{
+		closed:        0,
 		path:          inter.StdPath(path),
 		ins:           i,
 		relatedTables: make(map[string]string),
@@ -102,12 +105,15 @@ func (mc *MergeConfig) Start() {
 
 	gs, err := mysql.ParseMysqlGTIDSet(string(mc.offsets.Front().Value.(*meta.Offset).TrxGtid))
 	if err != nil {
-		log.Fatal(err)
+		log.Errorf("parse gtid{%s} error{%v}", string(mc.offsets.Front().Value.(*meta.Offset).TrxGtid), err)
+		mc.err = err
+		return
 	}
 
 	if streamer, err = mc.syncer.StartSyncGTID(gs); err != nil {
 		log.Error("error sync data using gtid ", err)
-		log.Fatal(err)
+		mc.err = err
+		return
 	}
 
 	defer mc.After.After()
@@ -173,7 +179,8 @@ func (mc *MergeConfig) Start() {
 			ev, err := streamer.GetEvent(mc.After.Ctx)
 			if err != nil {
 				log.Error("error handle binlog event ", err)
-				log.Fatal(err)
+				mc.After.Errs <- err
+				break
 			}
 			mc.EventHandler(ev)
 		}
@@ -182,10 +189,16 @@ func (mc *MergeConfig) Start() {
 
 // Close close when merge finished
 func (mc *MergeConfig) Close() {
-	// close syncer again
-	mc.syncer.Close()
+	if atomic.CompareAndSwapInt32(&mc.closed, 0, 1) {
+		// close syncer again
+		mc.syncer.Close()
 
-	mc.closeHandler()
+		mc.closeHandler()
+
+		return
+	}
+
+	log.Infof("already closed yet")
 }
 
 // EventHandler handle event false: arrived the terminal time, true: means continue

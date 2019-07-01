@@ -83,7 +83,8 @@ func initiate(cid int64) (*handler.MergeConfig, error) {
 		log.Errorf("read MySQL instance{according to %d} from etcd{%s} error {%s}", cid, etc.Url, err)
 		return nil, err
 	}
-	if i != nil {
+
+	if i == nil {
 		err := fmt.Errorf("MySQL instance is nil for{%d}", cid)
 		log.Error(err)
 		return nil, err
@@ -158,21 +159,17 @@ func logger() {
 
 // readRequest from http.Request
 func readRequest(r *http.Request) (*Request, error) {
-	rd, err := r.GetBody()
-	if err != nil {
-		//resp.Code = 1000
-		//resp.Message = fmt.Sprintf("get body from request{%s} error{%v}", r.Host, err)
-		return nil, err
-	}
-
+	log.Debugf("request %v", r)
 	// read all
-	data, err := ioutil.ReadAll(rd)
+	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		//resp.Code = 1000
 		//resp.Message = fmt.Sprintf("read data from io reader error %v", err)
 		log.Error(err)
 		return nil, err
 	}
+
+	log.Debugf("read data %s", string(data))
 
 	req := &Request{}
 	if err := json.Unmarshal(data, req); err != nil {
@@ -285,8 +282,12 @@ func (h *HttpServer) start(w http.ResponseWriter, r *http.Request) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
-	if _, ok := h.mcs[req.CId]; !ok {
-		resp.Message = fmt.Sprintf("cluster id{%d} is already dump on this server", req.CId)
+	for c, m := range h.mcs {
+		log.Debugf("cluster id{%d} offset{%v}", c, m.NewlyOffset())
+	}
+
+	if _, ok := h.mcs[req.CId]; ok {
+		resp.Message = fmt.Sprintf("cluster id{%d} already dump on this server", req.CId)
 		resp.Code = 1000
 		log.Error(resp.Message)
 		return
@@ -344,6 +345,8 @@ func (h *HttpServer) stop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.mcs[req.CId].Close()
+
+	delete(h.mcs, req.CId)
 }
 
 func main() {
@@ -381,7 +384,9 @@ func main() {
 	http.HandleFunc("/start", h.start)
 	http.HandleFunc("/stop", h.stop)
 
+	log.Info("start http server :8888")
 	if err := http.ListenAndServe(":8888", nil); err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
+
 }

@@ -22,7 +22,7 @@ func TestEtcdMeta_ReadOffset(t *testing.T) {
 		log.Fatal(err)
 	}
 
-	o, err := m.ReadOffset(1)
+	o, err := m.ReadOffset(100)
 	if err != nil {
 		log.Fatal(err)
 	}
