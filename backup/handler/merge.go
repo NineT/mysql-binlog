@@ -26,6 +26,7 @@ import (
 // MergeConfig merge conf
 type MergeConfig struct {
 	After         *final.After                         // After math for merge
+	mode          string                               // binlog mode separated, integrated for binlog event on each table
 	closed        int32                                // closed flag
 	err           error                                // error for status
 	path          string                               // 数据 kv 存储路径 快照存储路径
@@ -48,8 +49,9 @@ type MergeConfig struct {
 }
 
 // NewMergeConfig new merge config
-func NewMergeConfig(path string, off *meta.Offset, i *meta.Instance) (*MergeConfig, error) {
+func NewMergeConfig(path string, off *meta.Offset, i *meta.Instance, mode string) (*MergeConfig, error) {
 	m := &MergeConfig{
+		mode:          mode,
 		closed:        0,
 		path:          inter.StdPath(path),
 		ins:           i,
@@ -234,57 +236,61 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 			// here ddl may have two statement
 			log.Debug("schema ", string(qe.Schema), " ddl ", string(qe.Query), ", event size ", len(ev.RawData))
 
-			for _, ddl := range bytes.Split(qe.Query, []byte(";")) {
-				if tbs, matched := regx.Parse(ddl, qe.Schema); matched { // 匹配表名成功
-					for _, tb := range tbs {
-						// write table to table
-						mc.relatedTables[string(tb)] = string(tb)
+			// offset counter
+			var c int
+			switch mc.mode {
+			case "integrated":
+				// just write empty table name
+				mc.relatedTables[""] = ""
 
-						// write ddl to table handler
-						qe, err := blog.GenQueryEvent(ev, ddl, mc.checksumAlg)
-						if err != nil {
-							debug.PrintStack()
-							panic(err)
+				mc.tableHandlers[mc.table].EventChan <- mc.latestGtid
+
+				mc.tableHandlers[mc.table].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
+			case "separated":
+				// single log for each table
+				for _, ddl := range bytes.Split(qe.Query, []byte(";")) {
+					if tbs, matched := regx.Parse(ddl, qe.Schema); matched { // 匹配表名成功
+						for _, tb := range tbs {
+							// write table to table
+							mc.relatedTables[string(tb)] = string(tb)
+
+							// write ddl to table handler
+							qe, err := blog.GenQueryEvent(ev, ddl, mc.checksumAlg)
+							if err != nil {
+								debug.PrintStack()
+								panic(err)
+							}
+							mc.writeQueryEvent(tb, qe)
 						}
-						mc.writeQueryEvent(tb, qe)
+
+						log.Debug("push offset to position list")
+						c = len(tbs)
+					} else {
+						// common packet with ddl write to each table
+						log.Debug("not matched")
+						for _, h := range mc.tableHandlers {
+							// gtid
+							h.EventChan <- mc.latestGtid
+
+							// ddl event
+							h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
+						}
+						c = len(mc.tableHandlers)
 					}
-
-					log.Debug("push offset to position list")
-					// append offset
-					mc.offsets.PushBack(&meta.Offset{
-						CID:      mc.cid,
-						TrxGtid:  string(mc.latestGtid.TrxGtid),
-						ExedGtid: string(mc.latestGtid.TrxGtid), // here executed gtid equals = transaction gtid
-						Counter:  len(tbs),
-						Header:   false,
-						Time:     ev.Header.Timestamp,
-						BinFile:  mc.binFile,
-						BinPos:   ev.Header.LogPos,
-					})
-				} else {
-					// common packet with ddl write to each table
-					log.Debug("not matched")
-					for _, h := range mc.tableHandlers {
-						// gtid
-						h.EventChan <- mc.latestGtid
-
-						// ddl event
-						h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
-					}
-
-					// append offset
-					mc.offsets.PushBack(&meta.Offset{
-						CID:      mc.cid,
-						TrxGtid:  string(mc.latestGtid.TrxGtid),
-						ExedGtid: string(mc.latestGtid.TrxGtid), // newly then make executed gtid = transaction gtid
-						Counter:  len(mc.tableHandlers),
-						Header:   false,
-						Time:     ev.Header.Timestamp,
-						BinFile:  mc.binFile,
-						BinPos:   ev.Header.LogPos,
-					})
 				}
 			}
+
+			// append offset
+			mc.offsets.PushBack(&meta.Offset{
+				CID:      mc.cid,
+				TrxGtid:  string(mc.latestGtid.TrxGtid),
+				ExedGtid: string(mc.latestGtid.TrxGtid), // newly then make executed gtid = transaction gtid
+				Counter:  c,
+				Header:   false,
+				Time:     ev.Header.Timestamp,
+				BinFile:  mc.binFile,
+				BinPos:   ev.Header.LogPos,
+			})
 		}
 	case replication.STOP_EVENT:
 	case replication.ROTATE_EVENT:
@@ -327,9 +333,13 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 	case replication.EXECUTE_LOAD_QUERY_EVENT:
 	case replication.TABLE_MAP_EVENT:
 		tme, _ := ev.Event.(*replication.TableMapEvent)
-		mc.table = fmt.Sprintf("%s.%s", inter.CharStd(string(tme.Schema)),
-			inter.CharStd(string(tme.Table)))
-
+		switch mc.mode {
+		case "integrated":
+			mc.table = "" // always to empty
+		case "separated":
+			mc.table = fmt.Sprintf("%s.%s", inter.CharStd(string(tme.Schema)),
+				inter.CharStd(string(tme.Table)))
+		}
 		// remember related tables
 		mc.relatedTables[mc.table] = mc.table
 

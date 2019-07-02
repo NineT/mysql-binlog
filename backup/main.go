@@ -52,6 +52,9 @@ var (
 	// port using for http port
 	port = flag.Int("port", 8888, "http服务端口")
 
+	// dump for MySQL using separated mode or integrated mode
+	mode = flag.String("mode", "integrated", "separated or integrated 表示是否将每个表的binlog事件独立而不往一个binlog文件写")
+
 	// cfs storage path for binlog data
 	cfsPath = flag.String("cfspath", "/export/backup/", "cfs 数据存储目录")
 
@@ -97,10 +100,9 @@ func initiate(cid int64) (*handler.MergeConfig, error) {
 	}
 
 	// read meta offset using path
-	mp := fmt.Sprintf("%d/%s", cid, meta.OffsetKey)
-	log.Debug("etcd offset path ", mp)
+	log.Debug("etcd offset path ", cid)
 
-	o, err := etc.ReadOffset(mp)
+	o, err := etc.ReadOffset(cid)
 	if err != nil {
 		log.Error(err)
 		return nil, err
@@ -128,7 +130,7 @@ func initiate(cid int64) (*handler.MergeConfig, error) {
 	log.Debugf("start binlog gtid{%s}, binlog file{%s}, binlog position{%d}", string(off.ExedGtid), off.BinFile, off.BinPos)
 
 	// init merge config
-	mc, err := handler.NewMergeConfig(sp, off, i)
+	mc, err := handler.NewMergeConfig(sp, off, i, *mode)
 	if err != nil {
 		log.Error(err)
 		return nil, err
