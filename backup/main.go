@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/pprof"
+	"strings"
 	"sync"
 
 	"github.com/juju/errors"
@@ -35,17 +36,11 @@ type HttpServer struct {
 	mcs   map[int64]*handler.MergeConfig // merge config
 }
 
-// Request for heartbeat, start, kill, stop
-type Request struct {
-	CId int64 `json:"clusterid"` // cluster-id for MySQL cluster id
-}
-
 // Response for request
 type Response struct {
-	Code    int          `json:"code"`      // code: 0 means normal others means error
-	Message string       `json:"message"`   // message
-	CId     int64        `json:"clusterid"` // cluster-id for MySQL cluster id
-	Offset  *meta.Offset `json:"offset"`    // cluster-id map to offset that current for current dump
+	Code    int         `json:"code"`    // code: 0 means normal others means error
+	Message string      `json:"message"` // message
+	Data    interface{} `json:"data"`    // cluster-id map to offset that current for current dump
 }
 
 var (
@@ -58,15 +53,69 @@ var (
 	// cfs storage path for binlog data
 	cfsPath = flag.String("cfspath", "/export/backup/", "cfs 数据存储目录")
 
-	// etcd url
-	etcd = flag.String("etcd", "http://localhost:2379", "etcd 请求地址")
+	// etcd url http://localhost:2379
+	etcd = flag.String("etcd", "", "etcd 请求地址")
 
 	// log level
 	level = flag.String("level", "debug", "日志级别log level {debug/info/warn/error}")
 )
 
-// 初始化
-func initiate(cid int64) (*handler.MergeConfig, error) {
+// initUsingHttp for merge config init
+func initUsingHttp(m *meta.DbMeta) (*handler.MergeConfig, error) {
+	log.Infof("etcd url{%s}, path{%s}, log level{%s}", *etcd, *cfsPath, *level)
+
+	// data storage path clusterID
+	sp := fmt.Sprintf("%s%d", inter.StdPath(*cfsPath), m.Inst.CID)
+
+	// 创建目录
+	inter.CreateLocalDir(sp)
+
+	// has gtid check
+	if has := m.Inst.HasGTID(); !has {
+		err := errors.New("only support gtid opened MySQL instances")
+		log.Error(err)
+		return nil, err
+	}
+
+	// get master status
+	off := m.Off
+	if off == nil {
+		pos, err := m.Inst.MasterStatus()
+		if err != nil || pos.TrxGtid == "" {
+			log.Errorf("transaction id is empty or err {%v}", err)
+			return nil, err
+		}
+		log.Info("start binlog position ", string(pos.TrxGtid))
+		off = pos
+
+		off.CID = m.Inst.CID
+	}
+
+	log.Debugf("start binlog gtid{%s}, binlog file{%s}, binlog position{%d}", string(off.ExedGtid), off.BinFile, off.BinPos)
+
+	// init merge config
+	mc, err := handler.NewMergeConfig(sp, off, m.Inst, *mode)
+	if err != nil {
+		log.Error(err)
+		return nil, err
+	}
+
+	// init after math
+	errs := make(chan interface{}, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	am := &final.After{
+		Errs:   errs,
+		Ctx:    ctx,
+		Cancel: cancel,
+	}
+
+	mc.After = am
+
+	return mc, nil
+}
+
+// 初始化 etcd
+func initUsingEtcd(cid int64) (*handler.MergeConfig, error) {
 	log.Infof("etcd url{%s}, path{%s}, log level{%s}", *etcd, *cfsPath, *level)
 
 	// data storage path clusterID
@@ -160,7 +209,7 @@ func logger() {
 }
 
 // readRequest from http.Request
-func readRequest(r *http.Request) (*Request, error) {
+func readRequest(r *http.Request) (*meta.DbMeta, error) {
 	log.Debugf("request %v", r)
 	// read all
 	data, err := ioutil.ReadAll(r.Body)
@@ -173,7 +222,7 @@ func readRequest(r *http.Request) (*Request, error) {
 
 	log.Debugf("read data %s", string(data))
 
-	req := &Request{}
+	req := &meta.DbMeta{}
 	if err := json.Unmarshal(data, req); err != nil {
 		//resp.Message = fmt.Sprintf("unmarshal data{%s} error %v", string(data), err)
 		//log.Error(resp.Message)
@@ -214,30 +263,29 @@ func (h *HttpServer) heartbeat(w http.ResponseWriter, r *http.Request) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
-	if _, ok := h.mcs[req.CId]; !ok {
-		resp.Message = fmt.Sprintf("cluster id{%d} not found on this server", req.CId)
+	if _, ok := h.mcs[req.Inst.CID]; !ok {
+		resp.Message = fmt.Sprintf("cluster id{%d} not found on this server", req.Inst.CID)
 		resp.Code = 1000
 		log.Error(resp.Message)
 		return
 	}
 
 	// status error
-	if err := h.mcs[req.CId].Status(); err != nil {
-		resp.Message = fmt.Sprintf("cluster id{%d} error{%v}", req.CId, err)
+	if err := h.mcs[req.Inst.CID].Status(); err != nil {
+		resp.Message = fmt.Sprintf("cluster id{%d} error{%v}", req.Inst.CID, err)
 		resp.Code = 1000
 		log.Error(resp.Message)
 
 		// close dump for MySQL
-		h.mcs[req.CId].Close()
+		h.mcs[req.Inst.CID].Close()
 
 		// remove cluster id dump status
-		delete(h.mcs, req.CId)
+		delete(h.mcs, req.Inst.CID)
 		return
 	}
 
 	// cluster id
-	resp.CId = req.CId
-	resp.Offset = h.mcs[req.CId].NewlyOffset()
+	resp.Data = h.mcs[req.Inst.CID].NewlyOffset()
 }
 
 // start binlog dump for local
@@ -288,22 +336,37 @@ func (h *HttpServer) start(w http.ResponseWriter, r *http.Request) {
 		log.Debugf("cluster id{%d} offset{%v}", c, m.NewlyOffset())
 	}
 
-	if _, ok := h.mcs[req.CId]; ok {
-		resp.Message = fmt.Sprintf("cluster id{%d} already dump on this server", req.CId)
+	if _, ok := h.mcs[req.Inst.CID]; ok {
+		resp.Message = fmt.Sprintf("cluster id{%d} already dump on this server", req.Inst.CID)
 		resp.Code = 1000
 		log.Error(resp.Message)
 		return
 	}
 
-	mc, err := initiate(req.CId)
-	if err != nil {
-		resp.Message = fmt.Sprintf("start dump for cluster id{%d} error{%v}", req.CId, err)
-		resp.Code = 1000
-		log.Error(resp.Message)
-		return
+	// two kinds of start http start or etcd start
+	var mc *handler.MergeConfig
+
+	if len(strings.TrimSpace(*etcd)) > 0 {
+		tmc, err := initUsingEtcd(req.Inst.CID)
+		if err != nil {
+			resp.Message = fmt.Sprintf("start dump for cluster id{%d} error{%v}", req.Inst.CID, err)
+			resp.Code = 1000
+			log.Error(resp.Message)
+			return
+		}
+		mc = tmc
+	} else {
+		tmc, err := initUsingHttp(req)
+		if err != nil {
+			resp.Message = fmt.Sprintf("start dump for cluster id{%d} error{%v}", req.Inst.CID, err)
+			resp.Code = 1000
+			log.Error(resp.Message)
+			return
+		}
+		mc = tmc
 	}
 
-	h.mcs[req.CId] = mc
+	h.mcs[req.Inst.CID] = mc
 
 	// start new thread for binlog dump
 	go mc.Start()
@@ -339,16 +402,16 @@ func (h *HttpServer) stop(w http.ResponseWriter, r *http.Request) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
-	if _, ok := h.mcs[req.CId]; !ok {
-		resp.Message = fmt.Sprintf("cluster id{%d} not found on this server", req.CId)
+	if _, ok := h.mcs[req.Inst.CID]; !ok {
+		resp.Message = fmt.Sprintf("cluster id{%d} not found on this server", req.Inst.CID)
 		resp.Code = 1000
 		log.Error(resp.Message)
 		return
 	}
 
-	h.mcs[req.CId].Close()
+	h.mcs[req.Inst.CID].Close()
 
-	delete(h.mcs, req.CId)
+	delete(h.mcs, req.Inst.CID)
 }
 
 func main() {

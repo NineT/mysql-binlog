@@ -3,11 +3,18 @@ package meta
 import (
 	"database/sql"
 	"fmt"
-	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
-	"github.com/zssky/log"
 	"strconv"
 	"strings"
+
+	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
+	"github.com/zssky/log"
 )
+
+// DbMeta including init offset and instance information
+type DbMeta struct {
+	Off  *Offset   `json:"offset"`   // offset
+	Inst *Instance `json:"instance"` // instance
+}
 
 // Offset binlog offset write to meta
 type Offset struct {
