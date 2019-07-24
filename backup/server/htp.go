@@ -238,7 +238,8 @@ func readRequest(r *http.Request) (*meta.DbMeta, error) {
 // heartbeat for write current
 func (h *HttpServer) heartbeat(w http.ResponseWriter, r *http.Request) {
 	resp := &Response{
-		Code: 0,
+		Code:    Success,
+		Message: Errs[Success],
 	}
 
 	// writer data to response writer
@@ -377,7 +378,8 @@ func (h *HttpServer) start(w http.ResponseWriter, r *http.Request) {
 // stop binlog dump for local
 func (h *HttpServer) stop(w http.ResponseWriter, r *http.Request) {
 	resp := &Response{
-		Code: 0,
+		Code:    Success,
+		Message: Errs[Success],
 	}
 
 	// writer data to response writer
