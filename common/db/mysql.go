@@ -16,8 +16,17 @@ import (
 	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
 )
 
-// MetaConf 元数据信息
-type MetaConf inter.MySQLConfig
+// MySQLConfig configuration connect to mysql
+type MetaConf struct {
+	Host     string  // Host MySQL host 信息
+	IP       string  // IP host對應的ip信息
+	Port     int     // Port 端口信息
+	Db       string  // Db 数据库名
+	User     string  // User 用户名
+	Password string  // Password 链接MySQL 密码
+	Conn     *sql.DB // Conn MySQL 链接
+	Tx       *sql.Tx // transaction
+}
 
 // TableMeta table meta data
 type TableMeta struct {

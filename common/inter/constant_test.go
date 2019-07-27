@@ -14,7 +14,7 @@ func TestExists(t *testing.T) {
 
 func TestTail(t *testing.T) {
 	f := `/export/backup/1/test.aaa/list`
-	b, err := Tail(f)
+	b, err := LastLine(f)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -118,9 +118,9 @@ func (l *LogList) Close() {
 	l.iw = nil
 }
 
-// Tail line data
+// LastLine line data
 func (l *LogList) Tail() (int64, error) {
-	b, err := inter.Tail(l.FullName)
+	b, err := inter.LastLine(l.FullName)
 	if err != nil {
 		log.Errorf("read file{%s} tail error{%v}", l.FullName, err)
 		return 0, err

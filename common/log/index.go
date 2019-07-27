@@ -132,11 +132,11 @@ func (w *IndexWriter) Write(o *IndexOffset) error {
 	return nil
 }
 
-// Tail offset for binlog file
+// LastLine offset for binlog file
 func (w *IndexWriter) Tail() (*IndexOffset, error) {
 	name := fmt.Sprintf("%s/%d%s", w.dir, w.curr, IndexSuffix)
 
-	b, err := inter.Tail(name)
+	b, err := inter.LastLine(name)
 	if err != nil {
 		log.Errorf("read index file{%s} tail error{%v}", name, err)
 		return nil, err

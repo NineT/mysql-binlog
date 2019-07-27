@@ -222,8 +222,8 @@ func Exists(f string) bool {
 	return false
 }
 
-// Tail data for file
-func Tail(name string) ([]byte, error) {
+// LastLine data for file
+func LastLine(name string) ([]byte, error) {
 	st, err := os.Stat(name) //os.Stat获取文件信息
 	flag := true
 	if err != nil {
