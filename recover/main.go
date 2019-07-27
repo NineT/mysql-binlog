@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"github.com/mysql-binlog/recover/res"
+	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
 	"os"
 	"sync"
 
@@ -112,6 +113,7 @@ func main() {
 	errs := make(chan error, 64)
 	defer close(errs)
 
+	var trs []*res.TableRecover
 	for _, tb := range tbs {
 		tr, err := res.NewTable(tb, c.GetClusterPath(), t, ctx, o, l, wg, errs)
 		if err != nil {
@@ -120,6 +122,8 @@ func main() {
 		}
 
 		go tr.Recover()
+
+		trs = append(trs, tr)
 
 		log.Infof("start table {%s} recover ", tr.ID())
 	}
@@ -135,4 +139,26 @@ func main() {
 	log.Infof("wait for all to finish")
 	wg.Wait()
 
+	// take gtid
+	og, err := mysql.ParseMysqlGTIDSet(o.ExedGtid)
+	if err != nil {
+		log.Errorf("parse mysql gtid{%s} error{%v}", o.ExedGtid, err)
+		os.Exit(1)
+	}
+	// write newly offset to snapshot directory
+	for _, t := range trs {
+		if err := og.Update(t.ExecutedGTIDSet()); err != nil {
+			log.Errorf("merge gtid {%s} into original gtid set{%s} error{%v}", t.ExecutedGTIDSet(), o.ExedGtid, err)
+			os.Exit(1)
+		}
+	}
+
+	o.ExedGtid = og.String()
+	o.Time = uint32(t)
+	o.CID = *clusterID
+
+	if err := s.FlushOffset(o); err != nil {
+		log.Errorf("flush offset{%v} to snapshot{%s} index file error{%v}", o, s.ID(), err)
+		os.Exit(1)
+	}
 }

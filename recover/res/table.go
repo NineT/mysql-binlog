@@ -98,6 +98,11 @@ func (t *TableRecover) ID() string {
 	return fmt.Sprintf("%s/%d", t.path, t.time)
 }
 
+// ExecutedGTIDSet for gtid and timestamp
+func (t *TableRecover) ExecutedGTIDSet() string {
+	return t.mg.String()
+}
+
 // latestTime find the latestTime log file
 func latestTime(time int64, path string) (int64, error) {
 	fs, err := ioutil.ReadDir(path)

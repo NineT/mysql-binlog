@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/rand"
+	"os"
 	"strconv"
 	"strings"
 
@@ -54,6 +55,11 @@ func NewSnapshot(base string, clusterID, timestamp int64) *Snapshot {
 		clusterID: clusterID,
 		timestamp: timestamp,
 	}
+}
+
+// ID for snapshot
+func (s *Snapshot)ID() string {
+	return fmt.Sprintf("%s/%s%d", s.base, snapshotPrefix, s.timestamp)
 }
 
 // latestSnapshot to find
@@ -169,4 +175,32 @@ func (s *Snapshot) Offset() (*meta.Offset, error) {
 	}
 
 	return m, nil
+}
+
+// FlushOffset merged offset to directory
+func (s *Snapshot) FlushOffset(o *meta.Offset) error {
+	c := fmt.Sprintf("%s/%s%d/%s", s.base, snapshotPrefix, s.timestamp, snapshotOffset)
+
+	log.Infof("flush newly offset to %s", snapshotOffset)
+
+	f, err := os.OpenFile(c, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.FileMode(0666))
+	if err != nil {
+		log.Errorf("open file{%s} error{%v}", c, err)
+		return err
+	}
+	defer f.Close()
+
+	bt, err := json.Marshal(o)
+	if err != nil {
+		log.Errorf("marshal json{%v} error{%v}", o, err)
+		return err
+	}
+
+	if _, err := f.Write(bt); err != nil {
+		log.Errorf("write data{%s} to file{%s} error{%v}", string(bt), c, err)
+		return err
+	}
+
+	return nil
+
 }
