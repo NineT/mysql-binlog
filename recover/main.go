@@ -89,7 +89,7 @@ func main() {
 	}
 
 	// New local MySQL connection POOl
-	l, err := bpct.NewLocal(*user, *passwd)
+	l, err := bpct.NewInstance(*user, *passwd)
 	if err != nil {
 		os.Exit(1)
 	}

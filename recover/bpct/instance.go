@@ -22,8 +22,8 @@ type Instance struct {
 	trxs map[string]*sql.Tx // transactions
 }
 
-// NewLocal MySQL db connection pool
-func NewLocal(user, pass string) (*Instance, error) {
+// NewInstance MySQL db connection pool
+func NewInstance(user, pass string) (*Instance, error) {
 	url := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8&timeout=10s", user, pass, "127.0.0.1", 3358, "mysql")
 	db, err := sql.Open("mysql", url)
 	if err != nil {
