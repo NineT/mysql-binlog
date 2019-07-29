@@ -39,9 +39,9 @@ const (
 
 // Snapshot using snapshot and binlog files
 type Snapshot struct {
-	base      string `json:"base"`      // base path here default is /mysql_backup
-	clusterID int64  `json:"clusterid"` // cluster id for snapshot
-	timestamp int64  `json:"timestamp"` // timestamp to recover
+	base      string // base path here default is /mysql_backup
+	clusterID int64  // cluster id for snapshot
+	timestamp int64  // timestamp to recover
 }
 
 // NewSnapshot for recover
@@ -58,7 +58,7 @@ func NewSnapshot(base string, clusterID, timestamp int64) *Snapshot {
 }
 
 // ID for snapshot
-func (s *Snapshot)ID() string {
+func (s *Snapshot) ID() string {
 	return fmt.Sprintf("%s/%s%d", s.base, snapshotPrefix, s.timestamp)
 }
 

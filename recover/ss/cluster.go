@@ -12,7 +12,7 @@ import (
 * cluster for filter needing tables
 */
 
-// Cluster
+// Cluster for path and id
 type Cluster struct {
 	path string // files path
 	id   int64  // cluster id
@@ -37,8 +37,9 @@ func (c *Cluster) GetClusterPath() string {
 
 // SelectTables according to db reg and table reg, if none then return error
 func (c *Cluster) SelectTables(db, tb string) ([]string, error) {
-	dbReg := regexp.MustCompile(db)
-	tbReg := regexp.MustCompile(tb)
+	log.Infof("lower case of db{%s} and tb{%s}", db, tb)
+	dbReg := regexp.MustCompile(strings.ToLower(db))
+	tbReg := regexp.MustCompile(strings.ToLower(tb))
 
 	ns, err := ioutil.ReadDir(c.path)
 	if err != nil {
@@ -51,13 +52,18 @@ func (c *Cluster) SelectTables(db, tb string) ([]string, error) {
 	for _, n := range ns {
 		part := strings.Split(n.Name(), ".")
 
-		if len(part) < 2 {
+		if len(part) != 2 {
 			// part
 			continue
 		}
 
 		db := part[0]
 		tb := part[1]
+
+		if len(db) == 0 || len(tb) == 0 {
+			log.Warnf("not comply with db.table formation %s", n.Name())
+			continue
+		}
 
 		if dbReg.Match([]byte(db)) && tbReg.Match([]byte(tb)) {
 			tbs = append(tbs, n.Name())
