@@ -256,10 +256,15 @@ func LastLine(name string) ([]byte, error) {
 	data := list.New()
 
 	// default read buffer size
-	rbs := int64(100)
+	gap := int64(100)
+	rbs := int64(gap)
 
 	// start position
-	start := int64(-1*rbs - 1) // skip the last io.EOF
+	start, err := lineOffset(gap, -1 * rbs, f)
+	if err != nil {
+		log.Errorf("find the last line offset error{%v}", err)
+		return nil, err
+	}
 
 	// flag
 	right := false
@@ -270,7 +275,7 @@ func LastLine(name string) ([]byte, error) {
 			start = -1 * size
 		}
 
-		log.Debugf("[%d, %d]", start, start - size)
+		log.Debugf("[%d, %d]", start, start-size)
 
 		if _, err := f.Seek(start, 2); err != nil {
 			log.Errorf("fseek (%d, 2) error %v", start, err)
@@ -318,4 +323,39 @@ func LastLine(name string) ([]byte, error) {
 	}
 
 	return b.Bytes(), nil
+}
+
+func lineOffset(gap, start int64, f *os.File) (int64, error) {
+	// take the not enter char
+	skip := int64(0)
+	cs := make([]byte, 100)
+outer:
+	for {
+		if _, err := f.Seek(start, 2); err != nil {
+			log.Errorf("fseek (%d, 2) error %v", start, err)
+			return 0, err
+		}
+
+		// buffer for reading cache
+		n, err := f.Read(cs)
+		if err != nil {
+			log.Errorf("read bytes from file{%s} error{%v}", f.Name(), err)
+			return 0, err
+		}
+
+		for i := n - 1; i >= 0; i-- {
+			switch cs[i] {
+			case '\n':
+			default:
+				skip += int64(n - i)
+				break outer
+			}
+		}
+		start = start - gap
+	}
+
+	log.Infof("start = %d, skip=%d", start, skip)
+
+	// skip the last EOF bytes
+	return start - skip + 1, nil
 }

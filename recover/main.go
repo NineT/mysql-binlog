@@ -3,15 +3,16 @@ package main
 import (
 	"context"
 	"flag"
-	"github.com/mysql-binlog/recover/res"
-	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
 	"os"
 	"sync"
 
 	"github.com/zssky/log"
 
+	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
 	"github.com/mysql-binlog/common/inter"
+
 	"github.com/mysql-binlog/recover/bpct"
+	"github.com/mysql-binlog/recover/res"
 	"github.com/mysql-binlog/recover/ss"
 )
 
@@ -57,6 +58,7 @@ func main() {
 	// init logger
 	logger()
 
+	log.Infof("base path{%s}, cluster id {%d}, db {%s}, table{%s}, user{%s}, time{%s}, log level{%s}", *base, *clusterID, *db, *tb, *user, *time, *level)
 	t := inter.ParseTime(*time)
 
 	c := ss.NewCluster(*base, *clusterID)
@@ -64,25 +66,38 @@ func main() {
 	if err != nil {
 		os.Exit(1)
 	}
+	log.Infof("tables {%v} match reg{%s.%s}", tbs, *db, *tb)
 
 	// take the 1st offset
-	s := ss.NewSnapshot(*base, *clusterID, t)
+	s, err := ss.NewSnapshot(*base, *clusterID, t)
+	if err != nil {
+		os.Exit(1)
+	}
 
 	// take newly offset
 	o, err := s.Offset()
 	if err != nil {
 		os.Exit(1)
 	}
+	log.Infof("init newly offset{%v}", o)
 
 	// copy
-	if err := s.Copy(); err != nil {
+	if err := s.CopyData(); err != nil {
 		os.Exit(1)
 	}
+	log.Infof("snapshot copy ")
 
-	// modify conf
-	if err := s.ModifyConf(); err != nil {
+	// copy conf
+	if err := s.CopyConf(); err != nil {
 		os.Exit(1)
 	}
+	log.Infof("copy conf")
+
+	// auth
+	if err := s.Auth(); err != nil {
+		os.Exit(1)
+	}
+	log.Infof("auth file accessory")
 
 	// start MySQL
 	if err := s.StartMySQL(); err != nil {

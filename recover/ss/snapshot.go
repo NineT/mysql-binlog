@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -30,9 +29,7 @@ import (
 const (
 	snapshotPrefix = "snapshot_"
 
-	mysqlConf = "/export/servers/mysql/etc/my.cnf"
-
-	mysqlServer = "/export/servers/mysql/support-files"
+	mysqlConf = "/export/servers/mysql/etc/"
 
 	snapshotOffset = "so.index"
 )
@@ -41,20 +38,29 @@ const (
 type Snapshot struct {
 	base      string // base path here default is /mysql_backup
 	clusterID int64  // cluster id for snapshot
+	src       string // src snapshot for the right timestamp
 	timestamp int64  // timestamp to recover
 }
 
 // NewSnapshot for recover
-func NewSnapshot(base string, clusterID, timestamp int64) *Snapshot {
+func NewSnapshot(base string, clusterID, timestamp int64) (*Snapshot, error) {
 	if strings.HasSuffix(base, "/") {
 		base = strings.TrimSuffix(base, "/")
 	}
 
-	return &Snapshot{
+	s := &Snapshot{
 		base:      fmt.Sprintf("%s/%d", base, clusterID),
 		clusterID: clusterID,
 		timestamp: timestamp,
 	}
+
+	f, err := s.latestSnapshot()
+	if err != nil {
+		return nil, err
+	}
+
+	s.src = f
+	return s, nil
 }
 
 // ID for snapshot
@@ -101,18 +107,11 @@ func (s *Snapshot) latestSnapshot() (string, error) {
 	return fmt.Sprintf("%s/%s%d", s.base, snapshotPrefix, s.timestamp-mx), nil
 }
 
-// Copy data from original data on cfs to another timestamp
-func (s *Snapshot) Copy() error {
-	// src file
-	src, err := s.latestSnapshot()
-	if err != nil {
-		return err
-	}
+// CopyData data from original data on cfs to another timestamp
+func (s *Snapshot) CopyData() error {
+	log.Debugf("copy data from source {%s} to dst{%s} ", s.src, "/export/")
 
-	dst := fmt.Sprintf("%s/%s%d", s.base, snapshotPrefix, s.timestamp)
-	log.Debug("copy data from source {%s} to dst{%s} ", src, dst)
-
-	c := fmt.Sprintf("cp -R %s %s", src, dst)
+	c := fmt.Sprintf("cp -R %s/* %s", s.src, "/export/")
 	log.Debugf("execute shell command %s", c)
 
 	if _, _, err := utils.ExeShell(c); err != nil {
@@ -121,25 +120,13 @@ func (s *Snapshot) Copy() error {
 	return nil
 }
 
-// ModifyConf change data directory and replace server-id
-func (s *Snapshot) ModifyConf() error {
+// CopyConf change data directory and replace server-id
+func (s *Snapshot) CopyConf() error {
 	// newly path for current timestamp
-	path := fmt.Sprintf("%s/%s%d", s.base, snapshotPrefix, s.timestamp)
-
-	path = strings.Replace(path, "/", "\\/", 100)
-
-	// datadir replace command
-	dc := fmt.Sprintf("sed -i's/datadir.*/datadir=%s/g' %s", path, mysqlConf)
-
-	log.Infof("execute shell command %s", dc)
-	if _, _, err := utils.ExeShell(dc); err != nil {
-		return err
-	}
-
-	// server-id replace command
-	sc := fmt.Sprintf("sed -i 's/server-id.*/server-id	= %d/g' %s", rand.Uint32(), mysqlConf)
-	log.Infof("execute shell command %s", sc)
-	if _, _, err := utils.ExeShell(sc); err != nil {
+	// copy my.cnf to the right path
+	cp := fmt.Sprintf("cp %s/my.cnf %s", s.base, mysqlConf)
+	log.Infof("execute shell command %s", cp)
+	if _, _, err := utils.ExeShell(cp); err != nil {
 		return err
 	}
 
@@ -147,9 +134,20 @@ func (s *Snapshot) ModifyConf() error {
 	return nil
 }
 
+// Auth grant all auth to file to mysql:mysql
+func (s *Snapshot) Auth() error {
+	c := "chown -R mysql:mysql /export/"
+	o, e, err := utils.ExeShell(c)
+	if err != nil {
+		return err
+	}
+	log.Infof("out %s, err %s", o, e)
+	return nil
+}
+
 // StartMySQL if data is ready
 func (s *Snapshot) StartMySQL() error {
-	c := fmt.Sprintf("%s/mysql.server start", mysqlServer)
+	c := fmt.Sprintf("/export/servers/mysql/bin/mysqld_safe --defaults-file=/export/servers/mysql/etc/my.cnf --user=mysql &", )
 	o, e, err := utils.ExeShell(c)
 	if err != nil {
 		return err
@@ -160,21 +158,22 @@ func (s *Snapshot) StartMySQL() error {
 
 // Offset under snapshot
 func (s *Snapshot) Offset() (*meta.Offset, error) {
-	f := fmt.Sprintf("%s/%s", s.base, snapshotOffset)
+	f := fmt.Sprintf("%s/%s", s.src, snapshotOffset)
 	log.Infof("snapshot offset index file %s", f)
+
 	bt, err := inter.LastLine(f)
 	if err != nil {
 		log.Errorf("read last line on file{%s} error{%v}", f, err)
 		return nil, err
 	}
 
-	var m *meta.Offset
-	if err := json.Unmarshal(bt, m); err != nil {
+	o := &meta.Offset{}
+	if err := json.Unmarshal(bt, o); err != nil {
 		log.Errorf("unmarshal data {%s} error{%v}", string(bt), err)
 		return nil, err
 	}
 
-	return m, nil
+	return o, nil
 }
 
 // FlushOffset merged offset to directory
