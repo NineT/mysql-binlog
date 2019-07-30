@@ -54,6 +54,27 @@ func (i *Instance) Check() error {
 	return nil
 }
 
+// Flush data
+func (i *Instance) Flush() error {
+	tx, err := i.db.Begin()
+	if err != nil {
+		log.Errorf("start transaction error{%v}", err)
+		return err
+	}
+
+	if _, err := tx.Exec("flush tables with read lock"); err != nil {
+		log.Errorf("execute sql{flush tables with read lock} error{%v}", err)
+		return err
+	}
+
+	if _, err := tx.Exec("flush logs"); err != nil {
+		log.Errorf("execute sql{flush logs} error{%v}", err)
+		return err
+	}
+
+	return tx.Commit()
+}
+
 // Begin binlog syntax statement
 func (i *Instance) Begin(table string) error {
 	log.Debug("execute binlog statement for begin")

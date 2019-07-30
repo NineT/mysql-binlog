@@ -8,8 +8,8 @@ import (
 
 	"github.com/zssky/log"
 
-	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
 	"github.com/mysql-binlog/common/inter"
+	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
 
 	"github.com/mysql-binlog/recover/bpct"
 	"github.com/mysql-binlog/recover/res"
@@ -37,6 +37,9 @@ var (
 
 	// password
 	passwd = flag.String("password", "secret", "恢复目标 MySQL password")
+
+	// type
+	rt = flag.String("rt", "snapshot", "恢复类型recover type including{recover, snapshot} two kinds")
 
 	// log level
 	level = flag.String("level", "debug", "日志级别log level {debug/info/warn/error}")
@@ -105,14 +108,14 @@ func main() {
 	}
 
 	// New local MySQL connection POOl
-	l, err := bpct.NewInstance(*user, *passwd, 3358)
+	i, err := bpct.NewInstance(*user, *passwd, 3358)
 	if err != nil {
 		os.Exit(1)
 	}
-	defer l.Close()
+	defer i.Close()
 
 	// MySQL check
-	if err := l.Check(); err != nil {
+	if err := i.Check(); err != nil {
 		os.Exit(1)
 	}
 
@@ -130,7 +133,7 @@ func main() {
 
 	var trs []*res.TableRecover
 	for _, tb := range tbs {
-		tr, err := res.NewTable(tb, c.GetClusterPath(), t, ctx, o, l, wg, errs)
+		tr, err := res.NewTable(tb, c.GetClusterPath(), t, ctx, o, i, wg, errs)
 		if err != nil {
 			// error occur then exit
 			os.Exit(1)
@@ -153,6 +156,32 @@ func main() {
 
 	log.Infof("wait for all to finish")
 	wg.Wait()
+
+	// if just recover then here to return
+	switch *rt {
+	case "recover":
+		log.Infof("recover for {%d} to timestamp{%s} success", *clusterID, *time)
+		return
+	}
+
+	log.Infof("flush data on MySQL")
+	// flush tables with read lock; flush logs;
+	if err := i.Flush(); err != nil {
+		log.Errorf("flush MySQL data for cluster id{%d} error {%v}", *clusterID, err)
+		os.Exit(1)
+	}
+
+	log.Infof("to stop MySQL server")
+	if err := s.StopMySQL(*user, *passwd); err != nil {
+		log.Errorf("stop MySQL using user{%s} and password{*******} error{%v}", *user, err)
+		os.Exit(1)
+	}
+
+	log.Infof("to copy data to cfs")
+	if err := s.Copy2Cfs(); err != nil {
+		log.Errorf("copy data to cfs error {%v}", err)
+		os.Exit(1)
+	}
 
 	// take gtid
 	og, err := mysql.ParseMysqlGTIDSet(o.ExedGtid)
