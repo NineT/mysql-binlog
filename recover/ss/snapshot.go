@@ -31,6 +31,8 @@ const (
 
 	mysqlConf = "/export/servers/mysql/etc/"
 
+	mysqlServerPath = "/export/servers/mysql/support-files"
+
 	offsetSuffix = ".index"
 )
 
@@ -149,7 +151,7 @@ func (s *Snapshot) Auth() error {
 
 // StartMySQL if data is ready
 func (s *Snapshot) StartMySQL() error {
-	c := fmt.Sprintf("/export/servers/mysql/bin/mysqld_safe --defaults-file=/export/servers/mysql/etc/my.cnf --user=mysql &", )
+	c := fmt.Sprintf("%s/mysql.server start", mysqlServerPath)
 	o, e, err := utils.ExeShell(c)
 	if err != nil {
 		return err
@@ -160,7 +162,7 @@ func (s *Snapshot) StartMySQL() error {
 
 // StopMySQL for copy data to cfs
 func (s *Snapshot) StopMySQL(user, pass string) error {
-	c := fmt.Sprintf(" /export/servers/mysql/bin/mysqladmin --socket=/export/data/mysql/tmp/mysql.socket --user=%s --password=%s shutdown", user, pass)
+	c := fmt.Sprintf("%s/mysql.server stop", mysqlServerPath)
 	o, e, err := utils.ExeShell(c)
 	if err != nil {
 		return err

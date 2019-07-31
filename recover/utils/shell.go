@@ -45,7 +45,7 @@ func ExeShell(c string) (string, string, error) {
 
 	// wait for command execute over
 	if err := cmd.Wait(); err != nil {
-		log.Errorf("execute shell command wait error %v", err)
+		log.Errorf("shell command out{%s}, err{%s} wait error{%v}", string(orst), string(erst), err)
 		return string(orst), string(erst), err
 	}
 
