@@ -29,8 +29,6 @@ import (
 const (
 	snapshotPrefix = "snapshot_"
 
-	mysqlConf = "/export/servers/mysql/etc/"
-
 	mysqlServerPath = "/export/servers/mysql/support-files"
 
 	offsetSuffix = ".index"
@@ -124,11 +122,11 @@ func (s *Snapshot) CopyData() error {
 	return nil
 }
 
-// CopyConf change data directory and replace server-id
-func (s *Snapshot) CopyConf() error {
+// CopyBin change data directory and replace server-id
+func (s *Snapshot) CopyBin() error {
 	// newly path for current timestamp
 	// copy my.cnf to the right path
-	cp := fmt.Sprintf("cp %s/my.cnf %s", s.base, mysqlConf)
+	cp := fmt.Sprintf("cp -R %s/servers /export/", s.base)
 	log.Infof("execute shell command %s", cp)
 	if _, _, err := utils.ExeShell(cp); err != nil {
 		return err

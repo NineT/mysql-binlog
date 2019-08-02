@@ -91,7 +91,7 @@ func main() {
 	log.Infof("snapshot copy ")
 
 	// copy conf
-	if err := s.CopyConf(); err != nil {
+	if err := s.CopyBin(); err != nil {
 		os.Exit(1)
 	}
 	log.Infof("copy conf")
