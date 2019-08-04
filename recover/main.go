@@ -17,11 +17,11 @@ import (
 )
 
 var (
-	// base cfs存储路径
-	base = flag.String("base", "/export/backup/127.0.0.1", "cfs 远程存储路径")
+	// path cfs存储路径
+	path = flag.String("path", "/export/backup/127.0.0.1", "cfs 远程存储路径")
 
 	// clusterid
-	clusterID = flag.Int64("clusterid", 0, "集群ID")
+	clusterID = flag.Int64("cluster_id", 0, "集群ID")
 
 	// time
 	time = flag.String("time", "2999-12-30 23:59:59", "截止时间")
@@ -61,10 +61,10 @@ func main() {
 	// init logger
 	logger()
 
-	log.Infof("base path{%s}, cluster id {%d}, db {%s}, table{%s}, user{%s}, time{%s}, log level{%s}", *base, *clusterID, *db, *tb, *user, *time, *level)
+	log.Infof("path path{%s}, cluster id {%d}, db {%s}, table{%s}, user{%s}, time{%s}, log level{%s}", *path, *clusterID, *db, *tb, *user, *time, *level)
 	t := inter.ParseTime(*time)
 
-	c := ss.NewCluster(*base, *clusterID)
+	c := ss.NewCluster(*path, *clusterID)
 	tbs, err := c.SelectTables(*db, *tb)
 	if err != nil {
 		os.Exit(1)
@@ -72,7 +72,7 @@ func main() {
 	log.Infof("tables {%v} match reg{%s.%s}", tbs, *db, *tb)
 
 	// take the 1st offset
-	s, err := ss.NewSnapshot(*base, *clusterID, t)
+	s, err := ss.NewSnapshot(*path, *clusterID, t)
 	if err != nil {
 		os.Exit(1)
 	}
