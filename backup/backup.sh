@@ -7,4 +7,4 @@ kill -9 $pid
 echo "结束{$pName}进程.."
 sleep 1
 echo "开始backup 进程"
-nohup ./backup -port=8888 -mode=separated -level=debug -cfspath=/mysql_backup > bk.log 2>&1 &
+nohup ./backup -port=8888 -mode=separated -level=debug -cfspath=/export/backup > bk.log 2>&1 &

@@ -151,7 +151,7 @@ func (mc *MergeConfig) Start() {
 				// remove element from list and header will never be null
 				pre := tmp.Prev()
 				o := mc.offsets.Remove(tmp).(*meta.Offset)
-				log.Debugf("remove gtid %v", o)
+				log.Debugf("remove gtid %s, executed gtid %s", o.TrxGtid, o.ExedGtid)
 
 				pg, err := mysql.ParseMysqlGTIDSet(string(pre.Value.(*meta.Offset).ExedGtid))
 				if err != nil {
