@@ -260,7 +260,7 @@ func LastLine(name string) ([]byte, error) {
 	rbs := int64(gap)
 
 	// start position
-	start, err := lineOffset(gap, -1 * rbs, f)
+	start, err := lineOffset(gap, -1 * rbs, size, f)
 	if err != nil {
 		log.Errorf("find the last line offset error{%v}", err)
 		return nil, err
@@ -325,7 +325,11 @@ func LastLine(name string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func lineOffset(gap, start int64, f *os.File) (int64, error) {
+func lineOffset(gap, start, size int64, f *os.File) (int64, error) {
+	if -1 * start > size {
+		start = -1 * size
+	}
+
 	// take the not enter char
 	skip := int64(0)
 	cs := make([]byte, 100)
