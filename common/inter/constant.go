@@ -270,8 +270,13 @@ func LastLine(name string) ([]byte, error) {
 	right := false
 	for !right {
 		if start+size <= 0 {
-			// read to start
-			rbs = start + rbs + size
+			if -1 * start < rbs {
+				// first no loop using yet
+				rbs = -1 * start
+			} else {
+				// read to start
+				rbs = start + rbs + size
+			}
 			start = -1 * size
 		}
 
@@ -322,7 +327,8 @@ func LastLine(name string) ([]byte, error) {
 		}
 	}
 
-	return b.Bytes(), nil
+	// remove empty bytes and remove line enter
+	return bytes.TrimSuffix(bytes.TrimSuffix(b.Bytes(), []byte{0}), []byte{'\n'}), nil
 }
 
 func lineOffset(gap, start, size int64, f *os.File) (int64, error) {
