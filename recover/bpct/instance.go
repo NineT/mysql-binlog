@@ -5,10 +5,9 @@ package bpct
 */
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
-	"sync"
-
 	// mysql
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/zssky/log"
@@ -16,12 +15,10 @@ import (
 
 // Instance MySQL server
 type Instance struct {
-	user string  // user
-	pass string  // password
-	db   *sql.DB // db
-
-	lock *sync.Mutex        // map locks
-	trxs map[string]*sql.Tx // transactions
+	user string               // user
+	pass string               // password
+	db   *sql.DB              // db
+	cons map[string]*sql.Conn // connection map
 }
 
 // NewInstance MySQL db connection pool
@@ -37,8 +34,7 @@ func NewInstance(user, pass string, port int) (*Instance, error) {
 		user: user,
 		pass: pass,
 		db:   db,
-		lock: &sync.Mutex{},
-		trxs: make(map[string]*sql.Tx),
+		cons: make(map[string]*sql.Conn),
 	}, nil
 }
 
@@ -75,77 +71,33 @@ func (i *Instance) Flush() error {
 	return tx.Commit()
 }
 
-// Begin binlog syntax statement
-func (i *Instance) Begin(table string) error {
-	log.Debug("execute binlog statement for begin")
-	if _, ok := i.trxs[table]; ok {
-		// already transaction already begin
-		return nil
+// GetConn for table means one table one fixed connection
+func (i *Instance) GetConn(ctx context.Context, table string) (*sql.Conn, error) {
+	if con, ok := i.cons[table]; ok {
+		if err := con.Close(); err != nil {
+			log.Warnf("recycle connection for table{%s} error{%v}", table, err)
+		}
 	}
 
-	tx, err := i.db.Begin()
+	c, err := i.db.Conn(ctx)
 	if err != nil {
-		log.Errorf("db begin open transaction error{%v}", err)
-		return err
+		log.Errorf("open connection for table{%s} error{%v}", table, err)
+		return nil, err
 	}
-
-	// one table have one transaction pool
-	i.lock.Lock()
-	defer i.lock.Unlock()
-	i.trxs[table] = tx
-
-	return nil
+	i.cons[table] = c
+	return c, nil
 }
 
-// Execute binlog statements under transaction
-func (i *Instance) Execute(table string, bins []byte) error {
-	tx, ok := i.trxs[table]
-	if !ok {
-		err := fmt.Errorf("no begin for table{%s} on transation", table)
-		log.Error(err)
-		return err
-	}
-
-	if _, err := tx.Exec(string(bins)); err != nil {
-		log.Error(err)
-		return err
-	}
-	return nil
-}
-
-// Commit transaction data
-func (i *Instance) Commit(table string) error {
-	tx, ok := i.trxs[table]
-	if !ok {
-		err := fmt.Errorf("no begin for table{%s} on transation", table)
-		log.Error(err)
-		return err
-	}
-
-	// commit error
-	if err := tx.Commit(); err != nil {
-		log.Errorf("table {%s} commit error{%v}", table, err)
-		return err
-	}
-
-	// no need to clear
-	//i.lock.Lock()
-	//defer i.lock.Unlock()
-	//delete(i.trxs, table)
-
-	log.Debugf("table {%s} commit success", table)
-	return nil
-}
-
-// Close
+// Close all connections
 func (i *Instance) Close() {
-	for t, tx := range i.trxs {
-		log.Warnf("transaction on table{%s} no closed now to rollback", t)
-		if err := tx.Rollback(); err != nil {
+	for t, c := range i.cons {
+		log.Infof("close connection for table{%s} ", t)
+		if err := c.Close(); err != nil {
+			log.Warnf("close table {%s} connection error{%v}", t, err)
 		}
 	}
 
 	if err := i.db.Close(); err != nil {
-		log.Errorf("close db error{%v}", err)
+		log.Warnf("close connection pool error{%v}", err)
 	}
 }

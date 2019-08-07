@@ -2,10 +2,11 @@ package ss
 
 import (
 	"fmt"
-	"github.com/mysql-binlog/siddontang/go/log"
 	"io/ioutil"
 	"regexp"
 	"strings"
+
+	"github.com/zssky/log"
 )
 
 /**

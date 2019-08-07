@@ -3,6 +3,7 @@ package res
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io/ioutil"
 	"sort"
@@ -18,8 +19,6 @@ import (
 	"github.com/mysql-binlog/common/inter"
 	"github.com/mysql-binlog/common/meta"
 	"github.com/mysql-binlog/common/utils"
-
-	"github.com/mysql-binlog/recover/bpct"
 )
 
 /***
@@ -49,7 +48,8 @@ type TableRecover struct {
 	mg    mysql.GTIDSet   // merged gtid
 	cg    mysql.GTIDSet   // current gtid set
 	og    mysql.GTIDSet   // origin gtid offset
-	local *bpct.Instance  // MySQL local connection pool
+	con   *sql.Conn       // one table one connection
+	tx    *sql.Tx         // table transaction
 	wg    *sync.WaitGroup // wait group for outside
 	errs  chan error      // error channel
 
@@ -61,7 +61,7 @@ type TableRecover struct {
 }
 
 // NewTable for outside use
-func NewTable(table, clusterPath string, time int64, ctx context.Context, o *meta.Offset, l *bpct.Instance, wg *sync.WaitGroup, errs chan error) (*TableRecover, error) {
+func NewTable(table, clusterPath string, time int64, ctx context.Context, o *meta.Offset, c *sql.Conn, wg *sync.WaitGroup, errs chan error) (*TableRecover, error) {
 	if strings.HasSuffix(clusterPath, "/") {
 		clusterPath = strings.TrimSuffix(clusterPath, "/")
 	}
@@ -86,7 +86,7 @@ func NewTable(table, clusterPath string, time int64, ctx context.Context, o *met
 		off:    o,
 		mg:     mg,
 		og:     og,
-		local:  l,
+		con:    c,
 		wg:     wg,
 		errs:   errs,
 		parser: replication.NewBinlogParser(),
@@ -221,21 +221,22 @@ func (t *TableRecover) Recover() {
 			switch e.Header.EventType {
 			case replication.FORMAT_DESCRIPTION_EVENT:
 				// sql executor begin
-				if err := t.local.Begin(t.table); err != nil {
+				tx, err := t.con.BeginTx(t.ctx, nil)
+				if err != nil {
 					log.Error(err)
 					return err
 				}
-
+				t.tx = tx
 				t.desc = utils.Base64Encode(e.RawData)
 				// sql executor
-				if err := t.local.Execute(t.table, []byte(fmt.Sprintf("BINLOG '\n%s\n'%s", t.desc, inter.Delimiter))); err != nil {
-					log.Error(err)
+				if _, err := t.tx.Exec(fmt.Sprintf("BINLOG '\n%s\n'%s", t.desc, inter.Delimiter)); err != nil {
+					log.Errorf("execute binlog description event error{%v}", err)
 					return err
 				}
 
 				// sql executor commit
-				if err := t.local.Commit(t.table); err != nil {
-					log.Error(err)
+				if err := t.tx.Commit(); err != nil {
+					log.Errorf("execute binlog desc event commit error{%v}", err)
 					return err
 				}
 			case replication.QUERY_EVENT:
@@ -247,38 +248,44 @@ func (t *TableRecover) Recover() {
 				qe := e.Event.(*replication.QueryEvent)
 				switch strings.ToUpper(string(qe.Query)) {
 				case "BEGIN":
-					if err := t.local.Begin(t.table); err != nil {
+					tx, err := t.con.BeginTx(t.ctx, nil)
+					if err != nil {
 						log.Error(err)
 						return err
 					}
+
+					t.tx = tx
 				case "COMMIT":
-					if err := t.local.Commit(t.table); err != nil {
+					if err := t.tx.Commit(); err != nil {
 						log.Error(err)
 						return err
 					}
 				case "ROLLBACK":
 				case "SAVEPOINT":
 				default:
-					if err := t.local.Begin(t.table); err != nil {
-						log.Error(err)
+					tx, err := t.con.BeginTx(t.ctx, nil)
+					if err != nil {
+						log.Errorf("begin for table{%s} connection error{%v}", t.table, err)
 						return err
 					}
+
+					t.tx = tx
 
 					// first use db
 					if e.Header.Flags&inter.LogEventSuppressUseF == 0 && qe.Schema != nil && len(qe.Schema) != 0 {
 						use := fmt.Sprintf("use %s", qe.Schema)
-						if err := t.local.Execute(t.table, []byte(use)); err != nil {
-							log.Error(err)
+						if _, err := t.tx.Exec(use); err != nil {
+							log.Errorf("sql {%s} execute error{%v}", use, err)
 							return err
 						}
 					}
 
 					// then execute ddl
-					if err := t.local.Execute(t.table, qe.Query); err != nil {
-						log.Error(err)
+					if _, err := t.tx.Exec(string(qe.Query)); err != nil {
+						log.Errorf("execute ddl{%s} error{%v}", string(qe.Query), err)
 						return err
 					}
-					if err := t.local.Commit(t.table); err != nil {
+					if err := t.tx.Commit(); err != nil {
 						log.Error(err)
 						return err
 					}
@@ -288,7 +295,7 @@ func (t *TableRecover) Recover() {
 					log.Debugf("current gtid{%s} already executed on snapshot {%s}", t.cg.String(), t.off.ExedGtid)
 					return nil
 				}
-				if err := t.local.Commit(t.table); err != nil {
+				if err := t.tx.Commit(); err != nil {
 					log.Error(err)
 					return err
 				}
@@ -319,8 +326,8 @@ func (t *TableRecover) Recover() {
 					t.buffer.WriteString(fmt.Sprintf("\n'%s", inter.Delimiter))
 
 					// execute
-					if err := t.local.Execute(t.table, t.buffer.Bytes()); err != nil {
-						log.Error(err)
+					if _, err := t.tx.Exec(t.buffer.String()); err != nil {
+						log.Errorf("execute binlog stmt{%s} error{%v}", t.buffer.String(), err)
 						return err
 					}
 

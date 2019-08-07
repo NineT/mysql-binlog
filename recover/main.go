@@ -133,7 +133,13 @@ func main() {
 
 	var trs []*res.TableRecover
 	for _, tb := range tbs {
-		tr, err := res.NewTable(tb, c.GetClusterPath(), t, ctx, o, i, wg, errs)
+		con, err := i.GetConn(ctx, tb)
+		if err != nil {
+			log.Errorf("get connection for table{%s} error{%v}", tb, err)
+			os.Exit(1)
+		}
+
+		tr, err := res.NewTable(tb, c.GetClusterPath(), t, ctx, o, con, wg, errs)
 		if err != nil {
 			// error occur then exit
 			os.Exit(1)
@@ -147,9 +153,8 @@ func main() {
 	}
 
 	go func() {
-		select {
-		case err := <-errs:
-			log.Errorf("get error from routine{%v}", err)
+		for e := range errs {
+			log.Errorf("get error from routine{%v}", e)
 			cancel()
 		}
 	}()
