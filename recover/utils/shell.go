@@ -11,6 +11,7 @@ import (
 // ExeShell shell command without return stdout, stderr, error
 func ExeShell(c string) (string, string, error) {
 	cmd := exec.Command("/bin/bash", "-c", c)
+
 	op, _ := cmd.StdoutPipe()
 	ep, _ := cmd.StderrPipe()
 	defer func() {
@@ -23,12 +24,15 @@ func ExeShell(c string) (string, string, error) {
 		}
 	}()
 
+	log.Debug("command start")
 	// start execute command
 	if err := cmd.Start(); err != nil {
 		log.Errorf("execute shell command %s error %v", c, err)
 		return "", "", err
 	}
 
+
+	log.Debug("read out result ")
 	orst, err := ioutil.ReadAll(op)
 	if err != nil {
 		// read stdout pipe error
@@ -36,6 +40,7 @@ func ExeShell(c string) (string, string, error) {
 		return "", "", err
 	}
 
+	log.Debug("read error result ")
 	erst, err := ioutil.ReadAll(ep)
 	if err != nil {
 		// read error pipe error
@@ -43,6 +48,7 @@ func ExeShell(c string) (string, string, error) {
 		return "", "", err
 	}
 
+	log.Debug("command wait for finish")
 	// wait for command execute over
 	if err := cmd.Wait(); err != nil {
 		log.Errorf("shell command out{%s}, err{%s} wait error{%v}", string(orst), string(erst), err)

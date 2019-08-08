@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/zssky/log"
@@ -30,6 +31,8 @@ const (
 	snapshotPrefix = "snapshot_"
 
 	mysqlServerPath = "/export/servers/mysql/support-files"
+
+	mysqldPath = "/export/servers/mysql/"
 
 	offsetSuffix = ".index"
 )
@@ -149,13 +152,35 @@ func (s *Snapshot) Auth() error {
 
 // StartMySQL if data is ready
 func (s *Snapshot) StartMySQL() error {
-	c := fmt.Sprintf("%s/mysql.server start", mysqlServerPath)
-	o, e, err := utils.ExeShell(c)
+	// todo using mysqld_save must be no error out have wait the daemon process
+	m := fmt.Sprintf("nohup %s/bin/mysqld --defaults-file=%s/etc/my.cnf --user=mysql & ", mysqldPath, mysqldPath)
+	o, e, err := utils.ExeShell(m)
 	if err != nil {
 		return err
 	}
 	log.Infof("out %s, err %s", o, e)
-	return nil
+
+	timeout := 600
+	for i := 0; i < timeout; i += 10 {
+		c := "netstat -anp | grep 3358 | grep LISTEN | grep mysqld | wc -l"
+		ou, _, err := utils.ExeShell(c)
+		if err != nil {
+			return err
+		}
+
+		n, err := strconv.Atoi(strings.TrimSpace(ou))
+		if err != nil {
+			log.Errorf("convert out{%s} to number error{%v}", ou, err)
+			return err
+		}
+
+		if n != 0 {
+			return nil
+		}
+		time.Sleep(10 * time.Second)
+	}
+
+	return fmt.Errorf("MySQL start timeout %d seconds", 600)
 }
 
 // StopMySQL for copy data to cfs

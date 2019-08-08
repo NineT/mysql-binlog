@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/zssky/log"
@@ -166,7 +167,11 @@ func main() {
 	switch *rt {
 	case "recover":
 		log.Infof("recover for {%d} to timestamp{%s} success", *clusterID, *time)
-		return
+		for range errs {
+			// block forever
+		}
+	default:
+		// keep going
 	}
 
 	log.Infof("flush data on MySQL")
@@ -196,9 +201,12 @@ func main() {
 	}
 	// write newly offset to snapshot directory
 	for _, t := range trs {
-		if err := og.Update(t.ExecutedGTIDSet()); err != nil {
-			log.Errorf("merge gtid {%s} into original gtid set{%s} error{%v}", t.ExecutedGTIDSet(), o.ExedGtid, err)
-			os.Exit(1)
+
+		for _, g := range strings.Split(t.ExecutedGTIDSet(),",") {
+			if err := og.Update(g); err != nil {
+				log.Errorf("merge gtid {%s} into original gtid set{%s} error{%v}", t.ExecutedGTIDSet(), o.ExedGtid, err)
+				os.Exit(1)
+			}
 		}
 	}
 
