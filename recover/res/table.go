@@ -45,7 +45,7 @@ type TableRecover struct {
 	time  int64           // final time for binlog recover
 	ctx   context.Context // context
 	off   *meta.Offset    // start offset
-	mg    mysql.GTIDSet   // merged gtid
+	pos   *LogPosition    // log position
 	cg    mysql.GTIDSet   // current gtid set
 	og    mysql.GTIDSet   // origin gtid offset
 	con   *sql.Conn       // one table one connection
@@ -72,9 +72,9 @@ func NewTable(table, clusterPath string, time int64, ctx context.Context, o *met
 		return nil, err
 	}
 
-	mg, err := mysql.ParseMysqlGTIDSet(o.ExedGtid)
+	l, err := NewLogPosition(o.ExedGtid, o.Time)
 	if err != nil {
-		log.Errorf("parse executed gtid{%s} error{%v}", o.ExedGtid, err)
+		log.Errorf("new log position gtid{%s} error{%v}", o.ExedGtid, err)
 		return nil, err
 	}
 
@@ -84,7 +84,7 @@ func NewTable(table, clusterPath string, time int64, ctx context.Context, o *met
 		time:   time,
 		ctx:    ctx,
 		off:    o,
-		mg:     mg,
+		pos:    l,
 		og:     og,
 		con:    c,
 		wg:     wg,
@@ -98,9 +98,9 @@ func (t *TableRecover) ID() string {
 	return fmt.Sprintf("%s/%d", t.path, t.time)
 }
 
-// ExecutedGTIDSet for gtid and timestamp
-func (t *TableRecover) ExecutedGTIDSet() string {
-	return t.mg.String()
+// ExecutedGTID for gtid and timestamp
+func (t *TableRecover) ExecutedGTID() string {
+	return t.pos.executed.String()
 }
 
 // latestTime find the latestTime log file
@@ -217,6 +217,9 @@ func (t *TableRecover) Recover() {
 				t.done = true
 				return nil
 			}
+
+			// update timestamp
+			t.pos.UpdateTime(e.Header.Timestamp)
 
 			switch e.Header.EventType {
 			case replication.FORMAT_DESCRIPTION_EVENT:
@@ -346,8 +349,8 @@ func (t *TableRecover) Recover() {
 
 				t.cg = c
 
-				if err := t.mg.Update(s); err != nil {
-					log.Errorf("merge gtid{%s} into gtid{%s} error{%v}", s, t.mg.String(), err)
+				if err := t.pos.UpdateGTID(s); err != nil {
+					log.Errorf("update gtid{%s} to merged gtid set{%s} error{%v}", s, t.pos.String(), err)
 					return err
 				}
 			}

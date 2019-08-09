@@ -66,6 +66,19 @@ func main() {
 	t := inter.ParseTime(*time)
 
 	c := ss.NewCluster(*path, *clusterID)
+	// check timestamp
+	b, err := c.CheckTime(t)
+	if err != nil {
+		log.Error(err)
+		os.Exit(1)
+	}
+
+	log.Infof("all table timestamp > parameter timestamp{%d} is %v", t, b)
+	if !b {
+		// all table timestamp < parameter timestamp
+		log.Warnf("no table timestamp < parameter timestamp {%d}", t)
+	}
+
 	tbs, err := c.SelectTables(*db, *tb)
 	if err != nil {
 		os.Exit(1)
@@ -201,10 +214,14 @@ func main() {
 	}
 	// write newly offset to snapshot directory
 	for _, t := range trs {
-
-		for _, g := range strings.Split(t.ExecutedGTIDSet(),",") {
+		for _, g := range strings.Split(t.ExecutedGTID(), ",") {
+			g := strings.TrimSpace(g)
+			if strings.EqualFold(g, "") {
+				// skip empty string
+				continue
+			}
 			if err := og.Update(g); err != nil {
-				log.Errorf("merge gtid {%s} into original gtid set{%s} error{%v}", t.ExecutedGTIDSet(), o.ExedGtid, err)
+				log.Errorf("merge gtid {%s} into original gtid set{%s} error{%v}", g, o.ExedGtid, err)
 				os.Exit(1)
 			}
 		}
