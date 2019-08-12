@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/zssky/log"
-
-	"git.jd.com/binlake/common/inter"
 )
 
 // FileType 定义的文件类型 {day, hour, min, sec}
@@ -204,7 +202,7 @@ func CreateFile(f string) (*os.File, error) {
 		os.MkdirAll(dir, os.ModePerm)
 	}
 
-	file, err := os.OpenFile(f, os.O_CREATE|os.O_RDWR|os.O_TRUNC, inter.FileMode)
+	file, err := os.OpenFile(f, os.O_CREATE|os.O_RDWR|os.O_TRUNC, FileMode)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +244,7 @@ func LastLine(name string) ([]byte, error) {
 		return nil, nil
 	}
 
-	f, err := os.OpenFile(name, os.O_RDONLY, inter.FileMode)
+	f, err := os.OpenFile(name, os.O_RDONLY, FileMode)
 	if err != nil {
 		log.Errorf("open file{%s} error{%v}", name, err)
 		return nil, err
