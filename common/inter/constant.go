@@ -222,8 +222,8 @@ func Exists(f string) bool {
 	return false
 }
 
-// Tail data for file
-func Tail(name string) ([]byte, error) {
+// LastLine data for file
+func LastLine(name string) ([]byte, error) {
 	st, err := os.Stat(name) //os.Stat获取文件信息
 	flag := true
 	if err != nil {
@@ -256,21 +256,31 @@ func Tail(name string) ([]byte, error) {
 	data := list.New()
 
 	// default read buffer size
-	rbs := int64(100)
+	gap := int64(100)
+	rbs := int64(gap)
 
 	// start position
-	start := int64(-1*rbs - 1) // skip the last io.EOF
+	start, err := lineOffset(gap, -1 * rbs, size, f)
+	if err != nil {
+		log.Errorf("find the last line offset error{%v}", err)
+		return nil, err
+	}
 
 	// flag
 	right := false
 	for !right {
 		if start+size <= 0 {
-			// read to start
-			rbs = start + rbs + size
+			if -1 * start < rbs {
+				// first no loop using yet
+				rbs = -1 * start
+			} else {
+				// read to start
+				rbs = start + rbs + size
+			}
 			start = -1 * size
 		}
 
-		log.Debugf("[%d, %d]", start, start - size)
+		log.Debugf("[%d, %d]", start, start-size)
 
 		if _, err := f.Seek(start, 2); err != nil {
 			log.Errorf("fseek (%d, 2) error %v", start, err)
@@ -317,5 +327,45 @@ func Tail(name string) ([]byte, error) {
 		}
 	}
 
-	return b.Bytes(), nil
+	// remove empty bytes and remove line enter
+	return bytes.TrimSuffix(bytes.TrimSuffix(b.Bytes(), []byte{0}), []byte{'\n'}), nil
+}
+
+func lineOffset(gap, start, size int64, f *os.File) (int64, error) {
+	if -1 * start > size {
+		start = -1 * size
+	}
+
+	// take the not enter char
+	skip := int64(0)
+	cs := make([]byte, 100)
+outer:
+	for {
+		if _, err := f.Seek(start, 2); err != nil {
+			log.Errorf("fseek (%d, 2) error %v", start, err)
+			return 0, err
+		}
+
+		// buffer for reading cache
+		n, err := f.Read(cs)
+		if err != nil {
+			log.Errorf("read bytes from file{%s} error{%v}", f.Name(), err)
+			return 0, err
+		}
+
+		for i := n - 1; i >= 0; i-- {
+			switch cs[i] {
+			case '\n':
+			default:
+				skip += int64(n - i)
+				break outer
+			}
+		}
+		start = start - gap
+	}
+
+	log.Infof("start = %d, skip=%d", start, skip)
+
+	// skip the last EOF bytes
+	return start - skip + 1, nil
 }

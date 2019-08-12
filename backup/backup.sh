@@ -1,22 +1,10 @@
-#!/bin/sh
+#!/bin/bash
 
-if [ $# != 3 ] ; then
-    echo "no enough parameter for backup.sh script"
-    exit 1
-fi
+pid=`ps -ef |grep backup | grep mode | awk '{print $2}'`
+echo "kill pid $pid"
+kill -9 $pid
 
-####
-backup_file=$1
-host=$2
-end=$3
-
-echo "backup.file $backup_file host $host end $end"
-
-DIR=`pwd`
-
-if [ ! -f "backup" ]; then
-    echo "backup binary file not exist!!!!!"
-    exit 1
-fi
-
-chmod +x ./backup
+echo "结束{$pName}进程.."
+sleep 1
+echo "开始backup 进程"
+nohup ./backup -port=8888 -mode=separated -level=debug -cfspath=/export/backup > bk.log 2>&1 &

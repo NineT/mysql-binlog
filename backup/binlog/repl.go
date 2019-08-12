@@ -180,6 +180,18 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 		}
 
 		if flag {
+			// push gtid into channel
+			switch t.Header.EventType {
+			case replication.XID_EVENT:
+				// return gtid
+				h.GtidChan <- t.TrxGtid
+			case replication.QUERY_EVENT:
+				if t.IsDDL {
+					// return gtid
+					h.GtidChan <- t.TrxGtid
+				}
+			}
+
 			// current offset <= h.offset no need to rewrite event and index into file again the offset will reset until the new gtid event coming
 			return nil
 		}
