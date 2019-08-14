@@ -183,7 +183,7 @@ func CreateLocalDir(path string) {
 
 // ParseTime 解析字符串時間
 func ParseTime(end string) int64 {
-	stopTime, _ := time.Parse("2006-01-02 15:04:05", end)
+	stopTime, _ := time.ParseInLocation("2006-01-02 15:04:05", end, time.Local)
 	return stopTime.Unix()
 }
 

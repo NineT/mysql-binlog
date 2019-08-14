@@ -75,7 +75,7 @@ func NewEventHandler(path, table string, curr uint32, cid int64, desc *blog.Data
 
 		bw, err := blog.RecoverWriter(path, table, curr, o.Local.BinPos, desc)
 		if err != nil {
-			log.Errorf("recover writer{%s/%d%s} using exist index{%s/%d%s} error %v", dir, blog.LogSuffix, curr, dir, curr, blog.IndexSuffix, err)
+			log.Errorf("recover writer{%s/%d%s} using exist index{%s/%d%s} error %v", dir, curr, blog.LogSuffix, dir, curr, blog.IndexSuffix, err)
 			return nil, err
 		}
 
@@ -218,7 +218,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 			DumpPos:  pos,
 			Local:    h.offset,
 		}); err != nil {
-			log.Errorf("write xid index offset {%v} error %v", )
+			log.Errorf("write xid index offset {%v} error %v", h.offset, err)
 			return err
 		}
 
@@ -296,7 +296,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 	default:
 		// write event
 		if err := h.binWriter.WriteEvent(t); err != nil {
-			log.Errorf("write event {%s} error{%v}", h.binWriter.Dir, h.binWriter.FullName, err)
+			log.Errorf("write event {%s} to dir{%s} error{%v}", h.binWriter.FullName, h.binWriter.Dir, err)
 			return err
 		}
 	}

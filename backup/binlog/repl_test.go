@@ -3,12 +3,14 @@ package binlog
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
-	"github.com/zssky/log"
 	"io/ioutil"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/zssky/log"
 
 	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
 	"github.com/mysql-binlog/siddontang/go-mysql/replication"
@@ -170,6 +172,23 @@ func TestTime(t *testing.T) {
 
 }
 
+const (
+	Q_FLAGS2_CODE               = byte(0)
+	Q_SQL_MODE_CODE             = byte(1)
+	Q_CATALOG_NZ_CODE           = byte(6)
+	Q_AUTO_INCREMENT            = byte(3)
+	Q_CHARSET_CODE              = byte(4)
+	Q_TIME_ZONE_CODE            = byte(5)
+	Q_CATALOG_CODE              = byte(2)
+	Q_LC_TIME_NAMES_CODE        = byte(7)
+	Q_CHARSET_DATABASE_CODE     = byte(8)
+	Q_TABLE_MAP_FOR_UPDATE_CODE = byte(9)
+	Q_MASTER_DATA_WRITTEN_CODE  = byte(0x0a)
+	Q_INVOKERS                  = byte(0x0b)
+	Q_UPDATED_DB_NAMES          = byte(0x0c)
+	Q_MICROSECONDS              = byte(0x0d)
+)
+
 func TestParseBinlog(t *testing.T) {
 	parser := replication.NewBinlogParser()
 
@@ -182,7 +201,54 @@ func TestParseBinlog(t *testing.T) {
 		case replication.START_EVENT_V3:
 		case replication.QUERY_EVENT:
 			qe, _ := ev.Event.(*replication.QueryEvent)
-			fmt.Println(string(qe.Query))
+			log.Info(string(qe.Query))
+
+			for pos := 0; pos < len(qe.StatusVars)-1; pos ++ {
+				switch qe.StatusVars[pos] {
+				case Q_FLAGS2_CODE:
+					flag2 := binary.LittleEndian.Uint32(qe.StatusVars[0:])
+					pos += 4
+					log.Infof("flag2 = %d", flag2)
+				case Q_SQL_MODE_CODE:
+					pos += 8
+				case Q_CATALOG_NZ_CODE:
+					pos ++
+					l := qe.StatusVars[pos]
+					pos += int(l)
+				case Q_AUTO_INCREMENT:
+					pos += 4
+				case Q_CHARSET_CODE:
+					pos += 6
+				case Q_TIME_ZONE_CODE:
+					pos ++
+					pos += int(qe.StatusVars[pos])
+				case Q_LC_TIME_NAMES_CODE:
+					pos += 2
+				case Q_CHARSET_DATABASE_CODE:
+					pos += 2
+				case Q_TABLE_MAP_FOR_UPDATE_CODE:
+					pos += 8
+				case Q_MASTER_DATA_WRITTEN_CODE:
+					pos += 4
+				case Q_INVOKERS:
+					pos ++
+					pos += int(qe.StatusVars[pos])
+
+					pos ++
+					pos += int(qe.StatusVars[pos])
+				case Q_UPDATED_DB_NAMES:
+					pos ++
+					l := int(qe.StatusVars[pos])
+					if l > 16 {
+						pos ++
+						break
+					}
+					pos += l
+				case Q_MICROSECONDS:
+					pos += 3
+				}
+			}
+
 		case replication.STOP_EVENT:
 		case replication.ROTATE_EVENT:
 			re, _ := ev.Event.(*replication.RotateEvent)
@@ -208,45 +274,45 @@ func TestParseBinlog(t *testing.T) {
 		case replication.WRITE_ROWS_EVENTv0,
 			replication.WRITE_ROWS_EVENTv1,
 			replication.WRITE_ROWS_EVENTv2:
-			re, _ := ev.Event.(*replication.RowsEvent)
-			fmt.Println("write rows header length ", len(re.RowsHeader.Header))
+			//re, _ := ev.Event.(*replication.RowsEvent)
+			//fmt.Println("write rows header length ", len(re.RowsHeader.Header))
 
 		case replication.DELETE_ROWS_EVENTv0,
 			replication.DELETE_ROWS_EVENTv1,
 			replication.DELETE_ROWS_EVENTv2:
-			re, _ := ev.Event.(*replication.RowsEvent)
-			fmt.Println("delete rows header length ", len(re.RowsHeader.Header))
+			//re, _ := ev.Event.(*replication.RowsEvent)
+			//fmt.Println("delete rows header length ", len(re.RowsHeader.Header))
 
 		case replication.UPDATE_ROWS_EVENTv0,
 			replication.UPDATE_ROWS_EVENTv1,
 			replication.UPDATE_ROWS_EVENTv2:
-			re, _ := ev.Event.(*replication.RowsEvent)
-			fmt.Println("update header length ", len(re.RowsHeader.Header))
-
-			for idx, colVal := range re.Rows[0] {
-				fmt.Println("column index ", idx, " type is ", reflect.TypeOf(colVal), reflect.TypeOf(colVal).Kind())
-				switch reflect.TypeOf(colVal).Kind() {
-				case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-					fmt.Println(fmt.Sprintf("%d", colVal))
-				case reflect.Float32, reflect.Float64:
-					fmt.Println(fmt.Sprintf("%f", colVal))
-				case reflect.Slice:
-					v := colVal.([]uint8)
-					buffer := bytes.NewBuffer([]byte("0x"))
-					for i := 0; i < len(v); i++ {
-						buffer.WriteString(fmt.Sprintf("%.2x", v[i]))
-					}
-					fmt.Println(buffer)
-				case reflect.String:
-					v := mysql.Escape(colVal.(string))
-					fmt.Println(v)
-					if err := ioutil.WriteFile("./output2.txt", []byte(v), 0666); err != nil {
-						fmt.Println(err.Error())
-					}
-				}
-			}
-
-			fmt.Println(re.Rows)
+			//re, _ := ev.Event.(*replication.RowsEvent)
+			//fmt.Println("update header length ", len(re.RowsHeader.Header))
+			//
+			//for idx, colVal := range re.Rows[0] {
+			//	fmt.Println("column index ", idx, " type is ", reflect.TypeOf(colVal), reflect.TypeOf(colVal).Kind())
+			//	switch reflect.TypeOf(colVal).Kind() {
+			//	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			//		fmt.Println(fmt.Sprintf("%d", colVal))
+			//	case reflect.Float32, reflect.Float64:
+			//		fmt.Println(fmt.Sprintf("%f", colVal))
+			//	case reflect.Slice:
+			//		v := colVal.([]uint8)
+			//		buffer := bytes.NewBuffer([]byte("0x"))
+			//		for i := 0; i < len(v); i++ {
+			//			buffer.WriteString(fmt.Sprintf("%.2x", v[i]))
+			//		}
+			//		fmt.Println(buffer)
+			//	case reflect.String:
+			//		v := mysql.Escape(colVal.(string))
+			//		fmt.Println(v)
+			//		if err := ioutil.WriteFile("./output2.txt", []byte(v), 0666); err != nil {
+			//			fmt.Println(err.Error())
+			//		}
+			//	}
+			//}
+			//
+			//fmt.Println(re.Rows)
 
 		case replication.INCIDENT_EVENT:
 		case replication.HEARTBEAT_EVENT:
@@ -261,7 +327,7 @@ func TestParseBinlog(t *testing.T) {
 	}
 
 	// /export/backup/0/test.aaa/1560761463.log /tmp/mysql-bin.000001
-	if err := parser.ParseFile("/export/backup/0/test.aaa/1560761463.log", int64(4), handler); err != nil {
+	if err := parser.ParseFile("/tmp/mysql-bin.000001", int64(4), handler); err != nil {
 		return
 	}
 }
