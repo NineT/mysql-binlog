@@ -147,13 +147,13 @@ func main() {
 
 	var trs []*res.TableRecover
 	for _, tb := range tbs {
-		con, err := i.GetConn(ctx, tb)
+		// New local MySQL connection POOl
+		i, err := bpct.NewInstance(*user, *passwd, 3358)
 		if err != nil {
-			log.Errorf("get connection for table{%s} error{%v}", tb, err)
 			os.Exit(1)
 		}
 
-		tr, err := res.NewTable(tb, c.GetClusterPath(), t, ctx, o, con, wg, errs)
+		tr, err := res.NewTable(tb, c.GetClusterPath(), t, ctx, o, i, wg, errs)
 		if err != nil {
 			// error occur then exit
 			os.Exit(1)
@@ -167,9 +167,23 @@ func main() {
 	}
 
 	go func() {
-		for e := range errs {
-			log.Errorf("get error from routine{%v}", e)
-			cancel()
+
+		for {
+			select {
+			case e := <- errs:
+				log.Errorf("get error from routine{%v}", e)
+				cancel()
+
+				//// stop MySQL
+				//if err := s.StopMySQL("", ""); err != nil {
+				//}
+				//
+				//// remove path
+				//if err := s.RemoveData(); err != nil {
+				//
+				//}
+				os.Exit(1)
+			}
 		}
 	}()
 

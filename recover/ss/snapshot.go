@@ -231,7 +231,7 @@ func (s *Snapshot) Copy2Cfs() error {
 func (s *Snapshot) FlushOffset(o *meta.Offset) error {
 	c := fmt.Sprintf("%s/%s%d/%d%s", s.base, snapshotPrefix, s.timestamp, s.timestamp, offsetSuffix)
 
-	log.Infof("flush newly offset to %s", c)
+	log.Infof("flush newly offset{%v} to file{%s}", o, c)
 
 	f, err := os.OpenFile(c, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.FileMode(0666))
 	if err != nil {
@@ -251,5 +251,16 @@ func (s *Snapshot) FlushOffset(o *meta.Offset) error {
 		return err
 	}
 
+	return nil
+}
+
+// RemoveData
+func (s *Snapshot) RemoveData() error {
+	c := "/bin/rm -rf /export/*.index /export/servers /export/data"
+	o, e, err := utils.ExeShell(c)
+	if err != nil {
+		return err
+	}
+	log.Infof("out %s, err %s", o, e)
 	return nil
 }

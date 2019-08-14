@@ -5,7 +5,6 @@ package bpct
 */
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	// mysql
@@ -15,10 +14,10 @@ import (
 
 // Instance MySQL server
 type Instance struct {
-	user string               // user
-	pass string               // password
-	db   *sql.DB              // db
-	cons map[string]*sql.Conn // connection map
+	user string  // user
+	pass string  // password
+	db   *sql.DB // db
+	tx   *sql.Tx // transaction
 }
 
 // NewInstance MySQL db connection pool
@@ -30,12 +29,17 @@ func NewInstance(user, pass string, port int) (*Instance, error) {
 		return nil, err
 	}
 
-	return &Instance{
+	i := &Instance{
 		user: user,
 		pass: pass,
 		db:   db,
-		cons: make(map[string]*sql.Conn),
-	}, nil
+	}
+
+	if err := i.InitConn(); err != nil {
+		log.Errorf("init connection error{%v}", err)
+		return nil, err
+	}
+	return i, nil
 }
 
 // Check MySQL status
@@ -71,33 +75,49 @@ func (i *Instance) Flush() error {
 	return tx.Commit()
 }
 
-// GetConn for table means one table one fixed connection
-func (i *Instance) GetConn(ctx context.Context, table string) (*sql.Conn, error) {
-	if con, ok := i.cons[table]; ok {
-		if err := con.Close(); err != nil {
-			log.Warnf("recycle connection for table{%s} error{%v}", table, err)
-		}
+// InitConn for set
+func (i *Instance) InitConn() error {
+	sql := "SET @@session.foreign_key_checks=0, @@session.sql_auto_is_null=0, @@session.unique_checks=1, @@session.autocommit=0"
+	if _, err := i.db.Exec(sql); err != nil {
+		log.Errorf("execute query{%s} error{%v}", sql, err)
+		return err
 	}
 
-	c, err := i.db.Conn(ctx)
-	if err != nil {
-		log.Errorf("open connection for table{%s} error{%v}", table, err)
-		return nil, err
-	}
-	i.cons[table] = c
-	return c, nil
+	return nil
 }
 
 // Close all connections
 func (i *Instance) Close() {
-	for t, c := range i.cons {
-		log.Infof("close connection for table{%s} ", t)
-		if err := c.Close(); err != nil {
-			log.Warnf("close table {%s} connection error{%v}", t, err)
-		}
-	}
-
 	if err := i.db.Close(); err != nil {
 		log.Warnf("close connection pool error{%v}", err)
 	}
+}
+
+// Begin
+func (i *Instance) Begin() error {
+	log.Debug("begin")
+	tx, err := i.db.Begin()
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+	i.tx = tx
+	return nil
+}
+
+// Execute bins for binlog statement
+func (i *Instance) Execute(bins []byte) error {
+	log.Debug("execute binlog statement ", " exeucte size ", len(bins))
+
+	if _, err := i.tx.Exec(string(bins)); err != nil {
+		log.Error(err)
+		return err
+	}
+	return nil
+}
+
+// Commit commit transaction
+func (i *Instance) Commit() error {
+	log.Debug("commit")
+	return i.tx.Commit()
 }

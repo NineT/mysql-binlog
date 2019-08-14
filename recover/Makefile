@@ -30,4 +30,4 @@ clean:
 	@rm -rf recover
 
 recover:
-	go build -o $@ -ldflags '$(LDFLAGS)' 
+	@rm -rf recover && go build -o $@ -ldflags '$(LDFLAGS)' 
