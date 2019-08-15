@@ -122,14 +122,14 @@ func main() {
 	}
 
 	// New local MySQL connection POOl
-	i, err := bpct.NewInstance(*user, *passwd, 3358)
+	oi, err := bpct.NewInstance(*user, *passwd, 3358)
 	if err != nil {
 		os.Exit(1)
 	}
-	defer i.Close()
+	defer oi.Close()
 
 	// MySQL check
-	if err := i.Check(); err != nil {
+	if err := oi.Check(); err != nil {
 		os.Exit(1)
 	}
 
@@ -147,13 +147,7 @@ func main() {
 
 	var trs []*res.TableRecover
 	for _, tb := range tbs {
-		// New local MySQL connection POOl
-		i, err := bpct.NewInstance(*user, *passwd, 3358)
-		if err != nil {
-			os.Exit(1)
-		}
-
-		tr, err := res.NewTable(tb, c.GetClusterPath(), t, ctx, o, i, wg, errs)
+		tr, err := res.NewTable(tb, c.GetClusterPath(), t, ctx, o, *user, *passwd, 3358, wg, errs)
 		if err != nil {
 			// error occur then exit
 			os.Exit(1)
@@ -192,7 +186,7 @@ func main() {
 
 	log.Infof("flush data on MySQL")
 	// flush tables with read lock; flush logs;
-	if err := i.Flush(); err != nil {
+	if err := oi.Flush(); err != nil {
 		log.Errorf("flush MySQL data for cluster id{%d} error {%v}", *clusterID, err)
 		os.Exit(1)
 	}

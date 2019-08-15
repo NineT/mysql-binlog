@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-
 	"io/ioutil"
 	"sort"
 	"strconv"
@@ -19,9 +18,9 @@ import (
 	"github.com/mysql-binlog/siddontang/go-mysql/replication"
 
 	"github.com/mysql-binlog/common/inter"
+	clog "github.com/mysql-binlog/common/log"
 	"github.com/mysql-binlog/common/meta"
 	"github.com/mysql-binlog/common/utils"
-	clog "github.com/mysql-binlog/common/log"
 
 	"github.com/mysql-binlog/recover/bpct"
 )
@@ -58,6 +57,9 @@ type TableRecover struct {
 	cg    mysql.GTIDSet   // current gtid set
 	og    mysql.GTIDSet   // origin gtid offset
 	i     *bpct.Instance  // one table one connection
+	user  string          // mysql user
+	pass  string          // mysql pass
+	port  int             // mysql port
 	wg    *sync.WaitGroup // wait group for outside
 	errs  chan error      // error channel
 
@@ -68,7 +70,7 @@ type TableRecover struct {
 }
 
 // NewTable for outside use
-func NewTable(table, clusterPath string, time int64, ctx context.Context, o *meta.Offset, i *bpct.Instance, wg *sync.WaitGroup, errs chan error) (*TableRecover, error) {
+func NewTable(table, clusterPath string, time int64, ctx context.Context, o *meta.Offset, user, pass string, port int, wg *sync.WaitGroup, errs chan error) (*TableRecover, error) {
 	if strings.HasSuffix(clusterPath, "/") {
 		clusterPath = strings.TrimSuffix(clusterPath, "/")
 	}
@@ -93,7 +95,9 @@ func NewTable(table, clusterPath string, time int64, ctx context.Context, o *met
 		off:    o,
 		pos:    l,
 		og:     og,
-		i:      i,
+		user:   user,
+		pass:   pass,
+		port:   port,
 		wg:     wg,
 		errs:   errs,
 		parser: replication.NewBinlogParser(),
@@ -218,11 +222,23 @@ func (t *TableRecover) Recover() {
 		log.Infof("table {%s} recover finish", t.table)
 
 		// close instance
-		t.i.Close()
+		if t.i != nil {
+			t.i.Close()
+		}
 
 		// decrease
 		t.wg.Done()
 	}()
+
+	// New local MySQL connection POOl
+	ins, err := bpct.NewInstance(t.user, t.pass, t.port)
+	if err != nil {
+		log.Errorf("create MySQL instance error %v", err)
+		t.errs <- err
+		return
+	}
+
+	t.i = ins
 
 	// take selected log files
 	lfs, err := t.selectLogs(int64(t.off.Time), t.time)

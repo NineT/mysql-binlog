@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/zssky/log"
 )
@@ -76,4 +77,33 @@ func TestInstance_Commit(t *testing.T) {
 	for e := range errs {
 		log.Info(e)
 	}
+}
+
+func TestInstance_Execute(t *testing.T) {
+
+	for i := 0; i<  10; i++ {
+		ins, err := NewInstance("root", "secret", 3306)
+		if err != nil {
+			log.Fatal(err)
+		}
+		go func(inst *Instance) {
+
+			defer inst.Close()
+
+			for {
+				if err := inst.Begin(); err != nil {
+
+				}
+
+				if err := inst.Execute([]byte("set names='utf-8'")); err != nil {
+				}
+
+				if err := inst.Commit(); err != nil {
+
+				}
+			}
+		}(ins)
+	}
+
+	time.Sleep(1000000 * time.Hour)
 }

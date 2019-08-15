@@ -19,6 +19,7 @@ type Instance struct {
 	pass string  // password
 	db   *sql.DB // db
 	tx   *sql.Tx // transaction
+	rst  int     // transaction rst flag
 }
 
 // NewInstance MySQL db connection pool
@@ -34,6 +35,7 @@ func NewInstance(user, pass string, port int) (*Instance, error) {
 		user: user,
 		pass: pass,
 		db:   db,
+		rst:  0,
 	}
 
 	if err := i.InitConn(); err != nil {
@@ -103,7 +105,13 @@ func (i *Instance) Close() {
 
 // Begin
 func (i *Instance) Begin() error {
-	log.Debug("begin")
+	log.Debugf("begin rst signal flag %d", i.rst)
+	if i.rst != 0 {
+		if err := i.Commit(); err != nil {
+			log.Warn("rst signal is not == 0")
+		}
+	}
+
 	tx, err := i.db.BeginTx(context.Background(), &sql.TxOptions{
 		Isolation: sql.LevelReadCommitted,
 	})
@@ -112,6 +120,7 @@ func (i *Instance) Begin() error {
 		return err
 	}
 	i.tx = tx
+	i.rst ++
 	return nil
 }
 
@@ -129,5 +138,6 @@ func (i *Instance) Execute(bins []byte) error {
 // Commit commit transaction
 func (i *Instance) Commit() error {
 	log.Debug("commit")
+	i.rst --
 	return i.tx.Commit()
 }
