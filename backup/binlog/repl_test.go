@@ -3,7 +3,6 @@ package binlog
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io/ioutil"
 	"reflect"
@@ -202,52 +201,52 @@ func TestParseBinlog(t *testing.T) {
 		case replication.QUERY_EVENT:
 			qe, _ := ev.Event.(*replication.QueryEvent)
 			log.Info(string(qe.Query))
-
-			for pos := 0; pos < len(qe.StatusVars)-1; pos ++ {
-				switch qe.StatusVars[pos] {
-				case Q_FLAGS2_CODE:
-					flag2 := binary.LittleEndian.Uint32(qe.StatusVars[0:])
-					pos += 4
-					log.Infof("flag2 = %d", flag2)
-				case Q_SQL_MODE_CODE:
-					pos += 8
-				case Q_CATALOG_NZ_CODE:
-					pos ++
-					l := qe.StatusVars[pos]
-					pos += int(l)
-				case Q_AUTO_INCREMENT:
-					pos += 4
-				case Q_CHARSET_CODE:
-					pos += 6
-				case Q_TIME_ZONE_CODE:
-					pos ++
-					pos += int(qe.StatusVars[pos])
-				case Q_LC_TIME_NAMES_CODE:
-					pos += 2
-				case Q_CHARSET_DATABASE_CODE:
-					pos += 2
-				case Q_TABLE_MAP_FOR_UPDATE_CODE:
-					pos += 8
-				case Q_MASTER_DATA_WRITTEN_CODE:
-					pos += 4
-				case Q_INVOKERS:
-					pos ++
-					pos += int(qe.StatusVars[pos])
-
-					pos ++
-					pos += int(qe.StatusVars[pos])
-				case Q_UPDATED_DB_NAMES:
-					pos ++
-					l := int(qe.StatusVars[pos])
-					if l > 16 {
-						pos ++
-						break
-					}
-					pos += l
-				case Q_MICROSECONDS:
-					pos += 3
-				}
-			}
+			//
+			//for pos := 0; pos < len(qe.StatusVars) - 1; pos ++ {
+			//	switch qe.StatusVars[pos] {
+			//	case Q_FLAGS2_CODE:
+			//		flag2 := binary.LittleEndian.Uint32(qe.StatusVars[pos:])
+			//		pos += 4
+			//		log.Infof("flag2 = %d", flag2)
+			//	case Q_SQL_MODE_CODE:
+			//		pos += 8
+			//	case Q_CATALOG_NZ_CODE:
+			//		pos ++
+			//		l := qe.StatusVars[pos]
+			//		pos += int(l)
+			//	case Q_AUTO_INCREMENT:
+			//		pos += 4
+			//	case Q_CHARSET_CODE:
+			//		pos += 6
+			//	case Q_TIME_ZONE_CODE:
+			//		pos ++
+			//		pos += int(qe.StatusVars[pos])
+			//	case Q_LC_TIME_NAMES_CODE:
+			//		pos += 2
+			//	case Q_CHARSET_DATABASE_CODE:
+			//		pos += 2
+			//	case Q_TABLE_MAP_FOR_UPDATE_CODE:
+			//		pos += 8
+			//	case Q_MASTER_DATA_WRITTEN_CODE:
+			//		pos += 4
+			//	case Q_INVOKERS:
+			//		pos ++
+			//		pos += int(qe.StatusVars[pos])
+			//
+			//		pos ++
+			//		pos += int(qe.StatusVars[pos])
+			//	case Q_UPDATED_DB_NAMES:
+			//		pos ++
+			//		l := int(qe.StatusVars[pos])
+			//		if l > 16 {
+			//			pos ++
+			//			break
+			//		}
+			//		pos += l
+			//	case Q_MICROSECONDS:
+			//		pos += 3
+			//	}
+			//}
 
 		case replication.STOP_EVENT:
 		case replication.ROTATE_EVENT:
@@ -326,7 +325,7 @@ func TestParseBinlog(t *testing.T) {
 		return nil
 	}
 
-	// /export/backup/0/test.aaa/1560761463.log /tmp/mysql-bin.000001
+	// /home/pengan/1565581287.log /tmp/mysql-bin.000001
 	if err := parser.ParseFile("/tmp/mysql-bin.000001", int64(4), handler); err != nil {
 		return
 	}

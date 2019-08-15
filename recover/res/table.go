@@ -3,15 +3,16 @@ package res
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/mysql-binlog/recover/bpct"
+
 	"io/ioutil"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/zssky/log"
 
 	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
@@ -20,6 +21,9 @@ import (
 	"github.com/mysql-binlog/common/inter"
 	"github.com/mysql-binlog/common/meta"
 	"github.com/mysql-binlog/common/utils"
+	clog "github.com/mysql-binlog/common/log"
+
+	"github.com/mysql-binlog/recover/bpct"
 )
 
 /***
@@ -201,6 +205,16 @@ func (t *TableRecover) selectLogs(start, end int64) (int64s, error) {
 // Recover
 func (t *TableRecover) Recover() {
 	defer func() {
+		if err := recover(); err != nil {
+			if strings.EqualFold(err.(error).Error(), done) {
+				// do nothing
+				log.Infof("recover table {%s} done for timestamp{%d}", t.table, t.time)
+			} else if strings.EqualFold(err.(error).Error(), canceled) {
+				log.Info("table {%s} recovery canceled", t.table)
+			} else {
+				t.errs <- err.(error)
+			}
+		}
 		log.Infof("table {%s} recover finish", t.table)
 
 		// close instance
@@ -213,18 +227,24 @@ func (t *TableRecover) Recover() {
 	// take selected log files
 	lfs, err := t.selectLogs(int64(t.off.Time), t.time)
 	if err != nil {
+		log.Errorf("select logs[%d, %d] error %v", t.off.Time, t.time, err)
 		t.errs <- err
+		return
+	}
+
+	if len(lfs) == 0 {
+		log.Warnf("no logs for table {%s} to recover", t.table)
 		return
 	}
 
 	onEventFunc := func(e *replication.BinlogEvent) error {
 		select {
 		case <-t.ctx.Done():
-			return fmt.Errorf(canceled)
+			panic(fmt.Errorf(canceled))
 		default:
 			if int64(e.Header.Timestamp) > t.time {
-				log.Infof("table{%s} recover done", t.table)
-				return fmt.Errorf(done)
+				log.Infof("table{%s}, event pos{%d}, event type{%s}", t.table, e.Header.LogPos, e.Header.EventType)
+				panic(fmt.Errorf(done))
 			}
 
 			// update timestamp
@@ -234,20 +254,20 @@ func (t *TableRecover) Recover() {
 			case replication.FORMAT_DESCRIPTION_EVENT:
 				if err := t.i.Begin(); err != nil {
 					log.Error(err)
-					return err
+					panic(err)
 				}
 
 				t.desc = utils.Base64Encode(e.RawData)
 				// sql executor
 				if err := t.i.Execute([]byte(fmt.Sprintf("BINLOG '\n%s\n'%s", t.desc, inter.Delimiter))); err != nil {
 					log.Errorf("execute binlog description event error{%v}", err)
-					return err
+					panic(err)
 				}
 
 				// sql executor commit
 				if err := t.i.Commit(); err != nil {
 					log.Errorf("execute binlog desc event commit error{%v}", err)
-					return err
+					panic(err)
 				}
 			case replication.QUERY_EVENT:
 				if t.cg != nil && t.og.Contain(t.cg) {
@@ -260,37 +280,37 @@ func (t *TableRecover) Recover() {
 				case "BEGIN":
 					if err := t.i.Begin(); err != nil {
 						log.Error(err)
-						return err
+						panic(err)
 					}
 				case "COMMIT":
 					if err := t.i.Commit(); err != nil {
 						log.Error(err)
-						return err
+						panic(err)
 					}
 				case "ROLLBACK":
 				case "SAVEPOINT":
 				default:
 					if err := t.i.Begin(); err != nil {
 						log.Error(err)
-						return err
+						panic(err)
 					}
 					// first use db
 					if e.Header.Flags&inter.LogEventSuppressUseF == 0 && qe.Schema != nil && len(qe.Schema) != 0 {
 						use := fmt.Sprintf("use %s", qe.Schema)
 						if err := t.i.Execute([]byte(use)); err != nil {
 							log.Errorf("sql {%s} execute error{%v}", use, err)
-							return err
+							panic(err)
 						}
 					}
 
 					// then execute ddl
 					if err := t.i.Execute(qe.Query); err != nil {
 						log.Error(err)
-						return err
+						panic(err)
 					}
 					if err := t.i.Commit(); err != nil {
 						log.Error(err)
-						return err
+						panic(err)
 					}
 				}
 			case replication.XID_EVENT:
@@ -301,7 +321,7 @@ func (t *TableRecover) Recover() {
 
 				if err := t.i.Commit(); err != nil {
 					log.Error(err)
-					return err
+					panic(err)
 				}
 			case replication.TABLE_MAP_EVENT:
 				if t.cg != nil && t.og.Contain(t.cg) {
@@ -324,6 +344,17 @@ func (t *TableRecover) Recover() {
 					log.Debugf("current gtid{%s} already executed on snapshot {%s}", t.cg.String(), t.off.ExedGtid)
 					return nil
 				}
+
+				// all data into no uniq check and foreign key check
+				// all rows into no foreign key check and on uniq key check
+				re := e.Event.(*replication.RowsEvent)
+				re.Flags = re.Flags | clog.RowEventNoForeignKeyChecks | clog.RowEventNoUniqueKeyChecks
+
+				fs := make([]byte, 2)
+				binary.LittleEndian.PutUint16(fs, re.Flags)
+				e.RawData[replication.EventHeaderSize+re.RowsHeader.FlagsPos] = fs[0]
+				e.RawData[replication.EventHeaderSize+re.RowsHeader.FlagsPos+1] = fs[1]
+
 				t.buffer.WriteString(fmt.Sprintf("\n%s", utils.Base64Encode(e.RawData)))
 
 				if e.Event.(*replication.RowsEvent).Flags == StmtEndFlag {
@@ -333,7 +364,7 @@ func (t *TableRecover) Recover() {
 					bs := t.buffer.Bytes()
 					if err := t.i.Execute(bs); err != nil {
 						log.Errorf("table {%s} execute on gtid{%s} error{%v}", t.table, t.cg.String(), err)
-						return err
+						panic(err)
 					}
 
 					// reset buffer for reuse
@@ -345,20 +376,20 @@ func (t *TableRecover) Recover() {
 				u, err := uuid.FromBytes(g.SID)
 				if err != nil {
 					log.Errorf("parse uuid from gtid event error{%v}", err)
-					return err
+					panic(err)
 				}
 
 				s := fmt.Sprintf("%s:%d", u.String(), g.GNO)
 				c, err := mysql.ParseMysqlGTIDSet(s)
 				if err != nil {
 					log.Errorf("parse og{%s} error {%v}", s, err)
-					return err
+					panic(err)
 				}
 				t.cg = c
 
 				if err := t.pos.UpdateGTID(s); err != nil {
 					log.Errorf("update gtid{%s} to merged gtid set{%s} error{%v}", s, t.pos.String(), err)
-					return err
+					panic(err)
 				}
 			}
 			return nil
@@ -368,12 +399,10 @@ func (t *TableRecover) Recover() {
 	// range log files
 	for _, l := range lfs {
 		// parse each local binlog files
-
 		lf := fmt.Sprintf("%s/%d%s", t.path, l, inter.LogSuffix)
 		log.Debugf("parse binlog file{%s}", lf)
 
-		err := t.parser.ParseFile(lf, 4, onEventFunc)
-		if err != nil {
+		if err := t.parser.ParseFile(lf, 4, onEventFunc); err != nil {
 			if strings.EqualFold(err.Error(), done) {
 				// do nothing
 				log.Infof("recover table {%s} done for timestamp{%d}", t.table, t.time)

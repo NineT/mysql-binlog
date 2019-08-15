@@ -167,21 +167,10 @@ func main() {
 	}
 
 	go func() {
-
 		for {
 			select {
-			case e := <- errs:
-				log.Errorf("get error from routine{%v}", e)
+			case <- errs:
 				cancel()
-
-				//// stop MySQL
-				//if err := s.StopMySQL("", ""); err != nil {
-				//}
-				//
-				//// remove path
-				//if err := s.RemoveData(); err != nil {
-				//
-				//}
 				os.Exit(1)
 			}
 		}

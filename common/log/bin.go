@@ -34,6 +34,12 @@ const (
 
 	// log suffix
 	LogSuffix = ".log"
+
+	// no foreign key checks
+	RowEventNoForeignKeyChecks = 0x0002
+
+	// no unique key checks
+	RowEventNoUniqueKeyChecks = 0x0004
 )
 
 // DataEvent
@@ -187,6 +193,27 @@ func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, trxGtid, exedGti
 			BinFile:  binFile,
 			IsDDL:    ddl,
 		}
+	}
+
+	switch ev.Header.EventType {
+	case replication.WRITE_ROWS_EVENTv0,
+		replication.WRITE_ROWS_EVENTv1,
+		replication.WRITE_ROWS_EVENTv2,
+		replication.DELETE_ROWS_EVENTv0,
+		replication.DELETE_ROWS_EVENTv1,
+		replication.DELETE_ROWS_EVENTv2,
+		replication.UPDATE_ROWS_EVENTv0,
+		replication.UPDATE_ROWS_EVENTv1,
+		replication.UPDATE_ROWS_EVENTv2:
+
+		// all rows into no foreign key check and on uniq key check
+		re := ev.Event.(*replication.RowsEvent)
+		re.Flags = re.Flags | RowEventNoForeignKeyChecks | RowEventNoUniqueKeyChecks
+
+		fs := make([]byte, 2)
+		binary.LittleEndian.PutUint16(fs, re.Flags)
+		ev.RawData[replication.EventHeaderSize+re.RowsHeader.FlagsPos] = fs[0]
+		ev.RawData[replication.EventHeaderSize+re.RowsHeader.FlagsPos+1] = fs[1]
 	}
 
 	return &DataEvent{

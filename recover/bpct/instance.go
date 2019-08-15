@@ -5,6 +5,7 @@ package bpct
 */
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	// mysql
@@ -39,6 +40,7 @@ func NewInstance(user, pass string, port int) (*Instance, error) {
 		log.Errorf("init connection error{%v}", err)
 		return nil, err
 	}
+
 	return i, nil
 }
 
@@ -77,12 +79,18 @@ func (i *Instance) Flush() error {
 
 // InitConn for set
 func (i *Instance) InitConn() error {
-	sql := "SET @@session.foreign_key_checks=0, @@session.sql_auto_is_null=0, @@session.unique_checks=1, @@session.autocommit=0"
-	if _, err := i.db.Exec(sql); err != nil {
-		log.Errorf("execute query{%s} error{%v}", sql, err)
-		return err
+	sqls := []string{
+		"set @@GLOBAL.GTID_MODE = ON_PERMISSIVE",
+		"set @@GLOBAL.GTID_MODE = OFF_PERMISSIVE",
+		"SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
+		"SET @@session.foreign_key_checks=0, @@session.sql_auto_is_null=0, @@session.unique_checks=0, @@session.autocommit=0",
 	}
-
+	for _, s := range sqls {
+		if _, err := i.db.Exec(s); err != nil {
+			log.Errorf("execute query{%s} error{%v}", s, err)
+			return err
+		}
+	}
 	return nil
 }
 
@@ -96,7 +104,9 @@ func (i *Instance) Close() {
 // Begin
 func (i *Instance) Begin() error {
 	log.Debug("begin")
-	tx, err := i.db.Begin()
+	tx, err := i.db.BeginTx(context.Background(), &sql.TxOptions{
+		Isolation: sql.LevelReadCommitted,
+	})
 	if err != nil {
 		log.Error(err)
 		return err
