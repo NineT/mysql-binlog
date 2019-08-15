@@ -238,4 +238,7 @@ func main() {
 		log.Errorf("flush offset{%v} to snapshot{%s} index file error{%v}", o, s.ID(), err)
 		os.Exit(1)
 	}
+
+	// return success
+	os.Exit(0)
 }
