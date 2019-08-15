@@ -109,6 +109,7 @@ func (i *Instance) Begin() error {
 	if i.rst != 0 {
 		if err := i.Commit(); err != nil {
 			log.Warn("rst signal is not == 0")
+			return err
 		}
 	}
 

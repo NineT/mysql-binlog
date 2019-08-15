@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -191,67 +192,29 @@ const (
 func TestParseBinlog(t *testing.T) {
 	parser := replication.NewBinlogParser()
 
+	begin := 0
+	commit := 0
 	// true: means continue, false: means arrive the final time
 	handler := func(ev *replication.BinlogEvent) error {
-		fmt.Println("binlog position ", ev.Header.LogPos, ", event size ", ev.Header.EventSize, ", event type ", ev.Header.EventType)
-
 		switch ev.Header.EventType {
 		case replication.UNKNOWN_EVENT:
 		case replication.START_EVENT_V3:
 		case replication.QUERY_EVENT:
-			qe, _ := ev.Event.(*replication.QueryEvent)
-			log.Info(string(qe.Query))
-			//
-			//for pos := 0; pos < len(qe.StatusVars) - 1; pos ++ {
-			//	switch qe.StatusVars[pos] {
-			//	case Q_FLAGS2_CODE:
-			//		flag2 := binary.LittleEndian.Uint32(qe.StatusVars[pos:])
-			//		pos += 4
-			//		log.Infof("flag2 = %d", flag2)
-			//	case Q_SQL_MODE_CODE:
-			//		pos += 8
-			//	case Q_CATALOG_NZ_CODE:
-			//		pos ++
-			//		l := qe.StatusVars[pos]
-			//		pos += int(l)
-			//	case Q_AUTO_INCREMENT:
-			//		pos += 4
-			//	case Q_CHARSET_CODE:
-			//		pos += 6
-			//	case Q_TIME_ZONE_CODE:
-			//		pos ++
-			//		pos += int(qe.StatusVars[pos])
-			//	case Q_LC_TIME_NAMES_CODE:
-			//		pos += 2
-			//	case Q_CHARSET_DATABASE_CODE:
-			//		pos += 2
-			//	case Q_TABLE_MAP_FOR_UPDATE_CODE:
-			//		pos += 8
-			//	case Q_MASTER_DATA_WRITTEN_CODE:
-			//		pos += 4
-			//	case Q_INVOKERS:
-			//		pos ++
-			//		pos += int(qe.StatusVars[pos])
-			//
-			//		pos ++
-			//		pos += int(qe.StatusVars[pos])
-			//	case Q_UPDATED_DB_NAMES:
-			//		pos ++
-			//		l := int(qe.StatusVars[pos])
-			//		if l > 16 {
-			//			pos ++
-			//			break
-			//		}
-			//		pos += l
-			//	case Q_MICROSECONDS:
-			//		pos += 3
-			//	}
-			//}
-
+			qe := ev.Event.(*replication.QueryEvent)
+			switch strings.ToUpper(string(qe.Query)) {
+			case "BEGIN":
+				begin ++
+			case "COMMIT":
+				commit ++
+			default:
+				begin ++
+				commit ++
+				if begin != commit {
+					log.Infof("QUERY_EVENT begin = %d, commit = %d", begin, commit)
+				}
+			}
 		case replication.STOP_EVENT:
 		case replication.ROTATE_EVENT:
-			re, _ := ev.Event.(*replication.RotateEvent)
-			fmt.Println(re.NextLogName)
 		case replication.INTVAR_EVENT:
 		case replication.LOAD_EVENT:
 		case replication.SLAVE_EVENT:
@@ -263,56 +226,25 @@ func TestParseBinlog(t *testing.T) {
 		case replication.RAND_EVENT:
 		case replication.USER_VAR_EVENT:
 		case replication.FORMAT_DESCRIPTION_EVENT:
+			begin ++
+			commit ++
+			if begin != commit {
+				log.Infof("FORMAT_DESCRIPTION_EVENT begin = %d, commit = %d", begin, commit)
+			}
 		case replication.XID_EVENT:
+			commit ++
 		case replication.BEGIN_LOAD_QUERY_EVENT:
 		case replication.EXECUTE_LOAD_QUERY_EVENT:
 		case replication.TABLE_MAP_EVENT:
-			tme, _ := ev.Event.(*replication.TableMapEvent)
-			fmt.Println(string(tme.Table))
-
 		case replication.WRITE_ROWS_EVENTv0,
 			replication.WRITE_ROWS_EVENTv1,
 			replication.WRITE_ROWS_EVENTv2:
-			//re, _ := ev.Event.(*replication.RowsEvent)
-			//fmt.Println("write rows header length ", len(re.RowsHeader.Header))
-
 		case replication.DELETE_ROWS_EVENTv0,
 			replication.DELETE_ROWS_EVENTv1,
 			replication.DELETE_ROWS_EVENTv2:
-			//re, _ := ev.Event.(*replication.RowsEvent)
-			//fmt.Println("delete rows header length ", len(re.RowsHeader.Header))
-
 		case replication.UPDATE_ROWS_EVENTv0,
 			replication.UPDATE_ROWS_EVENTv1,
 			replication.UPDATE_ROWS_EVENTv2:
-			//re, _ := ev.Event.(*replication.RowsEvent)
-			//fmt.Println("update header length ", len(re.RowsHeader.Header))
-			//
-			//for idx, colVal := range re.Rows[0] {
-			//	fmt.Println("column index ", idx, " type is ", reflect.TypeOf(colVal), reflect.TypeOf(colVal).Kind())
-			//	switch reflect.TypeOf(colVal).Kind() {
-			//	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			//		fmt.Println(fmt.Sprintf("%d", colVal))
-			//	case reflect.Float32, reflect.Float64:
-			//		fmt.Println(fmt.Sprintf("%f", colVal))
-			//	case reflect.Slice:
-			//		v := colVal.([]uint8)
-			//		buffer := bytes.NewBuffer([]byte("0x"))
-			//		for i := 0; i < len(v); i++ {
-			//			buffer.WriteString(fmt.Sprintf("%.2x", v[i]))
-			//		}
-			//		fmt.Println(buffer)
-			//	case reflect.String:
-			//		v := mysql.Escape(colVal.(string))
-			//		fmt.Println(v)
-			//		if err := ioutil.WriteFile("./output2.txt", []byte(v), 0666); err != nil {
-			//			fmt.Println(err.Error())
-			//		}
-			//	}
-			//}
-			//
-			//fmt.Println(re.Rows)
-
 		case replication.INCIDENT_EVENT:
 		case replication.HEARTBEAT_EVENT:
 		case replication.IGNORABLE_EVENT:
@@ -326,7 +258,9 @@ func TestParseBinlog(t *testing.T) {
 	}
 
 	// /home/pengan/1565581287.log /tmp/mysql-bin.000001
-	if err := parser.ParseFile("/tmp/mysql-bin.000001", int64(4), handler); err != nil {
+	if err := parser.ParseFile("/home/pengan//1565346400.log", int64(4), handler); err != nil {
 		return
 	}
+
+	log.Infof("begin == %d, commit -= %d", begin, commit)
 }
