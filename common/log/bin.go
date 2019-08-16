@@ -205,7 +205,7 @@ func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, trxGtid, exedGti
 		ev.RawData[replication.EventHeaderSize+re.RowsHeader.FlagsPos+1] = fs[1]
 	}
 
-	// one data one object 
+	// one data one object
 	if checksumAlg == replication.BINLOG_CHECKSUM_ALG_CRC32 {
 		return &DataEvent{
 			Header:   ev.Header.Copy(), // here must copy for multi thread using shared header
@@ -423,5 +423,17 @@ func (b *BinlogWriter) LastPos(cid int64, exed, trx []byte, time uint32) *meta.O
 		BinFile:  fmt.Sprintf("%s/%s", b.Dir, b.Name),
 		BinPos:   b.logPos,
 		Time:     time,
+	}
+}
+
+// Copy copy data event
+func (e *DataEvent) Copy() *DataEvent {
+	return &DataEvent{
+		Header:   e.Header.Copy(), // only copy data
+		Data:     e.Data,
+		ExedGtid: e.ExedGtid,
+		TrxGtid:  e.TrxGtid,
+		BinFile:  e.BinFile,
+		IsDDL:    e.IsDDL,
 	}
 }

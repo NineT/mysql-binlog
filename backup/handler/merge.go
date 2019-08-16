@@ -243,7 +243,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 				// just write empty table name
 				mc.relatedTables[""] = ""
 
-				mc.tableHandlers[mc.table].EventChan <- mc.latestGtid
+				mc.tableHandlers[mc.table].EventChan <- mc.latestGtid.Copy()
 
 				mc.tableHandlers[mc.table].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
 			case "separated":
@@ -270,7 +270,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 						log.Debug("not matched")
 						for _, h := range mc.tableHandlers {
 							// gtid
-							h.EventChan <- mc.latestGtid
+							h.EventChan <- mc.latestGtid.Copy()
 
 							// ddl event
 							h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
@@ -349,10 +349,10 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 
 		h := mc.tableHandlers[mc.table]
 		// gtid
-		h.EventChan <- mc.latestGtid
+		h.EventChan <- mc.latestGtid.Copy()
 
 		// begin
-		h.EventChan <- mc.latestBegin
+		h.EventChan <- mc.latestBegin.Copy()
 
 		// table map event
 		h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
