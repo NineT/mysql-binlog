@@ -45,13 +45,13 @@ const (
 // LessEqual whether the o{mean the current offset} is <= another offset
 func LessEqual(o1, o2 *Offset) (bool, error) {
 	// if process is crashed
-	if o1.Time < o2.Time {
-		return true, nil
-	}
-
-	if o1.Time > o2.Time {
-		return false, nil
-	}
+	//if o1.Time < o2.Time {
+	//	return true, nil
+	//}
+	//
+	//if o1.Time > o2.Time {
+	//	return false, nil
+	//}
 
 	g1, err := mysql.ParseMysqlGTIDSet(o1.ExedGtid)
 	if err != nil {
