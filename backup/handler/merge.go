@@ -42,7 +42,7 @@ type MergeConfig struct {
 	latestBegin   *blog.DataEvent                      // begin for latest
 	gtid          mysql.GTIDSet                        // current integrate gtid
 	latestGtid    *blog.DataEvent                      // gtid for latest
-	relatedTables map[string]string                    // relatedTables gtid related tables
+	relatedTables map[string]bool                      // relatedTables gtid related tables
 	tableHandlers map[string]*binlog.TableEventHandler // tableHandlers 每张表的操作
 	gc            chan []byte                          // gtid channel using for gtid channels
 	offsets       *list.List                           // offsets for gtid list
@@ -55,7 +55,7 @@ func NewMergeConfig(path string, off *meta.Offset, i *meta.Instance, mode string
 		closed:        0,
 		path:          inter.StdPath(path),
 		ins:           i,
-		relatedTables: make(map[string]string),
+		relatedTables: make(map[string]bool),
 		tableHandlers: make(map[string]*binlog.TableEventHandler),
 		gc:            make(chan []byte, inter.BufferSize),
 	}
@@ -230,6 +230,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 		case "BEGIN":
 			mc.latestBegin = blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
 		case "COMMIT":
+			mc.handleCommit(ev)
 		case "ROLLBACK":
 		case "SAVEPOINT":
 		default:
@@ -241,7 +242,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 			switch mc.mode {
 			case "integrated":
 				// just write empty table name
-				mc.relatedTables[""] = ""
+				mc.relatedTables[""] = true
 
 				mc.tableHandlers[mc.table].EventChan <- mc.latestGtid.Copy()
 
@@ -252,7 +253,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 					if tbs, matched := regx.Parse(ddl, qe.Schema); matched { // 匹配表名成功
 						for _, tb := range tbs {
 							// write table to table
-							mc.relatedTables[string(tb)] = string(tb)
+							mc.relatedTables[string(tb)] = true
 
 							// write ddl to table handler
 							qe, err := blog.GenQueryEvent(ev, ddl, mc.checksumAlg)
@@ -314,21 +315,8 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 		mc.formatDesc = ev
 		mc.checksumAlg = mc.formatDesc.Event.(*replication.FormatDescriptionEvent).ChecksumAlgorithm
 	case replication.XID_EVENT:
-		for t := range mc.relatedTables {
-			// write xid commit event to each table
-			mc.tableHandlers[t].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
-		}
+		mc.handleCommit(ev)
 
-		mc.offsets.PushBack(&meta.Offset{
-			CID:      mc.cid,
-			TrxGtid:  string(mc.latestGtid.TrxGtid),
-			ExedGtid: string(mc.latestGtid.TrxGtid), // newly then make executed gtid = transaction gtid
-			Counter:  len(mc.relatedTables),
-			Header:   false,
-			Time:     ev.Header.Timestamp,
-			BinFile:  mc.binFile,
-			BinPos:   ev.Header.LogPos,
-		})
 	case replication.BEGIN_LOAD_QUERY_EVENT:
 	case replication.EXECUTE_LOAD_QUERY_EVENT:
 	case replication.TABLE_MAP_EVENT:
@@ -340,19 +328,28 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 			mc.table = fmt.Sprintf("%s.%s", inter.CharStd(string(tme.Schema)),
 				inter.CharStd(string(tme.Table)))
 		}
+
 		// remember related tables
-		mc.relatedTables[mc.table] = mc.table
+		if _, ok := mc.relatedTables[mc.table]; !ok {
+			mc.relatedTables[mc.table] = true
+		}
 
 		if _, ok := mc.tableHandlers[mc.table]; !ok {
 			mc.newHandler(curr, mc.table, mc.gc)
 		}
 
 		h := mc.tableHandlers[mc.table]
-		// gtid
-		h.EventChan <- mc.latestGtid.Copy()
 
-		// begin
-		h.EventChan <- mc.latestBegin.Copy()
+		// one table => one binlog file => one gtid event & begin event in 1 trx
+		if mc.relatedTables[mc.table] {
+			// gtid
+			h.EventChan <- mc.latestGtid.Copy()
+
+			// begin
+			h.EventChan <- mc.latestBegin.Copy()
+
+			mc.relatedTables[mc.table] = false
+		}
 
 		// table map event
 		h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
@@ -375,7 +372,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 	case replication.ROWS_QUERY_EVENT: // query ddl
 	case replication.GTID_EVENT:
 		// reset the previous map
-		mc.relatedTables = make(map[string]string)
+		mc.relatedTables = make(map[string]bool)
 
 		ge := ev.Event.(*replication.GTIDEvent)
 		u, err := uuid.FromBytes(ge.SID)
@@ -455,4 +452,23 @@ func (mc *MergeConfig) NewlyOffset() *meta.Offset {
 // Status for dump status: nil is normal and occur error means something wrong
 func (mc *MergeConfig) Status() error {
 	return mc.err
+}
+
+// handleCommit
+func (mc *MergeConfig) handleCommit(ev *replication.BinlogEvent) {
+	for t := range mc.relatedTables {
+		// write xid commit event to each table
+		mc.tableHandlers[t].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
+	}
+
+	mc.offsets.PushBack(&meta.Offset{
+		CID:      mc.cid,
+		TrxGtid:  string(mc.latestGtid.TrxGtid),
+		ExedGtid: string(mc.latestGtid.TrxGtid), // newly then make executed gtid = transaction gtid
+		Counter:  len(mc.relatedTables),
+		Header:   false,
+		Time:     ev.Header.Timestamp,
+		BinFile:  mc.binFile,
+		BinPos:   ev.Header.LogPos,
+	})
 }
