@@ -251,7 +251,7 @@ func (s *Snapshot) FlushOffset(o *meta.Offset) error {
 		return err
 	}
 
-	return nil
+	return f.Sync()
 }
 
 // RemoveData
