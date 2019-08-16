@@ -184,17 +184,6 @@ func GenQueryEvent(e *replication.BinlogEvent, ddl []byte, checksumAlg byte) (*r
 
 // Binlog2Data: data event from binlog event for sinGtid, intGtid each one is an copy
 func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, trxGtid, exedGtid []byte, binFile string, ddl bool) *DataEvent {
-	if checksumAlg == replication.BINLOG_CHECKSUM_ALG_CRC32 {
-		return &DataEvent{
-			Header:   ev.Header,
-			Data:     ev.RawData[replication.EventHeaderSize : len(ev.RawData)-CRC32Size],
-			ExedGtid: exedGtid,
-			TrxGtid:  trxGtid,
-			BinFile:  binFile,
-			IsDDL:    ddl,
-		}
-	}
-
 	switch ev.Header.EventType {
 	case replication.WRITE_ROWS_EVENTv0,
 		replication.WRITE_ROWS_EVENTv1,
@@ -216,8 +205,19 @@ func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, trxGtid, exedGti
 		ev.RawData[replication.EventHeaderSize+re.RowsHeader.FlagsPos+1] = fs[1]
 	}
 
+	// one data one object 
+	if checksumAlg == replication.BINLOG_CHECKSUM_ALG_CRC32 {
+		return &DataEvent{
+			Header:   ev.Header.Copy(), // here must copy for multi thread using shared header
+			Data:     ev.RawData[replication.EventHeaderSize : len(ev.RawData)-CRC32Size],
+			ExedGtid: exedGtid,
+			TrxGtid:  trxGtid,
+			BinFile:  binFile,
+			IsDDL:    ddl,
+		}
+	}
 	return &DataEvent{
-		Header:   ev.Header,
+		Header:   ev.Header.Copy(), // here must copy for multi thread using shared header
 		Data:     ev.RawData[replication.EventHeaderSize:],
 		ExedGtid: exedGtid,
 		TrxGtid:  trxGtid,
