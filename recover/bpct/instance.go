@@ -60,23 +60,11 @@ func (i *Instance) Check() error {
 
 // Flush data
 func (i *Instance) Flush() error {
-	tx, err := i.db.Begin()
-	if err != nil {
-		log.Errorf("start transaction error{%v}", err)
+	if _, err := i.db.Exec("reset master"); err != nil {
+		log.Errorf("execute sql{reset master} error{%v}", err)
 		return err
 	}
-
-	if _, err := tx.Exec("flush tables with read lock"); err != nil {
-		log.Errorf("execute sql{flush tables with read lock} error{%v}", err)
-		return err
-	}
-
-	if _, err := tx.Exec("flush logs"); err != nil {
-		log.Errorf("execute sql{flush logs} error{%v}", err)
-		return err
-	}
-
-	return tx.Commit()
+	return nil
 }
 
 // InitConn for set

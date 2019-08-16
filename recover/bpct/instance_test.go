@@ -18,6 +18,10 @@ func TestNewInstance(t *testing.T) {
 	}
 
 	defer i.Close()
+
+	if err := i.Flush(); err != nil {
+		log.Error(err)
+	}
 }
 
 func TestInstance_Check(t *testing.T) {

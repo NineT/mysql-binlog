@@ -3,14 +3,13 @@ package ss
 import (
 	"encoding/json"
 	"fmt"
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/zssky/log"
 	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-
-	_ "github.com/go-sql-driver/mysql"
-	"github.com/zssky/log"
 
 	"github.com/mysql-binlog/common/inter"
 	"github.com/mysql-binlog/common/meta"
@@ -150,8 +149,29 @@ func (s *Snapshot) Auth() error {
 	return nil
 }
 
+// removeRedo log
+func (s *Snapshot) removeRedo() {
+	// remove redo logs in case of error  find ./* -name "ib_logfile*" | xargs /bin/rm
+	c := "find /export/data/mysql/* -name 'ib_logfile*' | xargs /bin/rm "
+	log.Debugf("remove redo log %s", c)
+	if _, _, err := utils.ExeShell(c); err != nil {
+		log.Warnf("execute command %s error {%v}", c, err)
+	}
+}
+
 // StartMySQL if data is ready
 func (s *Snapshot) StartMySQL() error {
+	if err := s.startMySQLd(); err != nil {
+		log.Warnf("try again according to remove redo log")
+		s.removeRedo() //
+		return s.startMySQLd()
+	}
+	// remove redo log in case and restart again
+	return nil
+}
+
+// startMySQLd
+func (s *Snapshot) startMySQLd() error {
 	// todo using mysqld_save must be no error out have wait the daemon process
 	m := fmt.Sprintf("nohup %s/bin/mysqld --defaults-file=%s/etc/my.cnf --user=mysql & ", mysqldPath, mysqldPath)
 	o, e, err := utils.ExeShell(m)
@@ -160,8 +180,8 @@ func (s *Snapshot) StartMySQL() error {
 	}
 	log.Infof("out %s, err %s", o, e)
 
-	timeout := 600
-	for i := 0; i < timeout; i += 10 {
+	timeout := 10
+	for i := 0; i < timeout; i ++ {
 		c := "netstat -anp | grep 3358 | grep LISTEN | grep mysqld | wc -l"
 		ou, _, err := utils.ExeShell(c)
 		if err != nil {
@@ -177,10 +197,9 @@ func (s *Snapshot) StartMySQL() error {
 		if n != 0 {
 			return nil
 		}
-		time.Sleep(10 * time.Second)
+		time.Sleep(2 * time.Second)
 	}
-
-	return fmt.Errorf("MySQL start timeout %d seconds", 600)
+	return fmt.Errorf("MySQL start timeout %d seconds", 20)
 }
 
 // StopMySQL for copy data to cfs
