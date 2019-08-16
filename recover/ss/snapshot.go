@@ -243,6 +243,21 @@ func (s *Snapshot) Copy2Cfs() error {
 		return err
 	}
 	log.Infof("out %s, err %s", o, e)
+
+	if err := s.sync(); err != nil {
+		log.Infof("sync error {%v}", err)
+	}
+
+	return nil
+}
+
+// Sync data in buffer into disk
+func (s *Snapshot) sync() error {
+	o, e, err := utils.ExeShell("sync")
+	if err != nil {
+		return err
+	}
+	log.Infof("out %s, err %s", o, e)
 	return nil
 }
 
