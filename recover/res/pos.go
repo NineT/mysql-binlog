@@ -2,6 +2,7 @@ package res
 
 import (
 	"fmt"
+
 	"github.com/zssky/log"
 
 	"github.com/mysql-binlog/siddontang/go-mysql/mysql"

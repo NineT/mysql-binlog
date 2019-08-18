@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/satori/go.uuid"
 	"strings"
 	"sync"
 
+	"github.com/satori/go.uuid"
 	"github.com/zssky/log"
 
 	"github.com/mysql-binlog/common/inter"
