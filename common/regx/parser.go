@@ -3,15 +3,21 @@ package regx
 import (
 	"bytes"
 	"fmt"
+	"strings"
+
 	"github.com/xwb1989/sqlparser"
 	"github.com/zssky/log"
-	"strings"
+
+	"github.com/mysql-binlog/common/inter"
 )
 
 // Parse parse ddl and get table
 func Parse(ddl []byte, db []byte) ([][]byte, bool) {
 	log.Debug("parse ddl ", string(ddl))
 	var tables [][]byte
+
+	// using standard lower case for ddl sql
+	ddl = []byte(inter.CharStd(string(ddl)))
 
 	if strings.HasPrefix(string(ddl), sqlparser.RenameStr) && strings.Contains(string(ddl), ",") {
 		// rename sql ddl

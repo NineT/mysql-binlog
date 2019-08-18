@@ -172,7 +172,7 @@ func (mc *MergeConfig) Start() {
 		default:
 			// check write is block make sure that write cannot hang
 			// consider the worst situation for only one channel exists then size(offset) must < inter.BufferSize
-			if mc.offsets.Len() >= inter.BufferSize {
+			if mc.offsets.Len() >= (inter.BufferSize / 4){
 				log.Warnf("buffer is full for offset size %d >= %d wait for 1.sec for buffer clearing because storage write slowly", mc.offsets.Len(), inter.BufferSize)
 				time.Sleep(time.Second)
 				break
