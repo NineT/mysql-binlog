@@ -1,0 +1,74 @@
+package res
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"sync"
+
+	"github.com/zssky/log"
+
+	"github.com/mysql-binlog/common/meta"
+)
+
+// RecoverMode
+type RecoverMode string
+
+const (
+	separated RecoverMode = "separated"
+
+	// integer means all binlog file into one whole style
+	integer RecoverMode = "integer"
+)
+
+// Recover for tables or integer
+type Recover interface {
+	ID() string
+	Recover()
+	ExecutedGTID() string
+}
+
+// Recovering
+func Recovering(mode RecoverMode, tbs []string, clusterPath string, time int64, ctx context.Context, o *meta.Offset, user, pass string, port int, errs chan error) ([]Recover, error) {
+	switch mode {
+	case separated:
+		// init wait group
+		size := len(tbs)
+		wg := &sync.WaitGroup{}
+		wg.Add(size)
+
+		var trs []Recover
+		for _, tb := range tbs {
+			tr, err := NewTable(tb, clusterPath, time, ctx, o, user, pass, port, wg, errs)
+			if err != nil {
+				// error occur then exit
+				os.Exit(1)
+			}
+
+			go tr.Recover()
+
+			trs = append(trs, tr)
+
+			log.Infof("start table {%s} recover ", tr.ID())
+		}
+
+		log.Infof("wait for all tables to finish")
+		wg.Wait()
+		return trs, nil
+	case integer:
+		wg := &sync.WaitGroup{}
+		wg.Add(1)
+
+		it, err := NewInteger(clusterPath, time, ctx, o, user, pass, port, wg, errs)
+		if err != nil {
+			os.Exit(1)
+		}
+
+		go it.Recover()
+
+		log.Infof("start table {%s} recover ", it.ID())
+		wg.Wait()
+		return []Recover{it}, nil
+	}
+	panic(fmt.Errorf("recover mode %s no supported {integer, separated}", mode))
+}

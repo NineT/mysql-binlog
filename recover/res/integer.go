@@ -5,60 +5,38 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/satori/go.uuid"
 	"strings"
 	"sync"
 
-	"github.com/google/uuid"
 	"github.com/zssky/log"
+
+	"github.com/mysql-binlog/common/inter"
+	clog "github.com/mysql-binlog/common/log"
+	"github.com/mysql-binlog/common/utils"
 
 	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
 	"github.com/mysql-binlog/siddontang/go-mysql/replication"
 
-	"github.com/mysql-binlog/common/inter"
-	clog "github.com/mysql-binlog/common/log"
 	"github.com/mysql-binlog/common/meta"
-	"github.com/mysql-binlog/common/utils"
-
 	"github.com/mysql-binlog/recover/bpct"
 )
 
-/***
-* recover on table each table have one routine
-*
-*/
-const (
-	// 	StmtEndFlag        = 1
-	StmtEndFlag = 1
-
-	logSuffix = ".log"
-
-	done = "done"
-
-	canceled = "canceled"
-)
-
-type int64s []int64
-
-func (s int64s) Len() int           { return len(s) }
-func (s int64s) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
-func (s int64s) Less(i, j int) bool { return s[i] < s[j] }
-
-// TableRecover
-type TableRecover struct {
-	table string          // table name
-	path  string          // table binlog path
-	time  int64           // final time for binlog recover
-	ctx   context.Context // context
-	off   *meta.Offset    // start offset
-	pos   *LogPosition    // log position
-	cg    mysql.GTIDSet   // current gtid set
-	og    mysql.GTIDSet   // origin gtid offset
-	i     *bpct.Instance  // one table one connection
-	user  string          // mysql user
-	pass  string          // mysql pass
-	port  int             // mysql port
-	wg    *sync.WaitGroup // wait group for outside
-	errs  chan error      // error channel
+// IntegerRecover on whole binlog file
+type IntegerRecover struct {
+	path string          // table binlog path
+	time int64           // final time for binlog recover
+	ctx  context.Context // context
+	off  *meta.Offset    // start offset
+	pos  *LogPosition    // log position
+	cg   mysql.GTIDSet   // current gtid set
+	og   mysql.GTIDSet   // origin gtid offset
+	i    *bpct.Instance  // one table one connection
+	user string          // mysql user
+	pass string          // mysql pass
+	port int             // mysql port
+	wg   *sync.WaitGroup // wait group for outside
+	errs chan error      // error channel
 
 	// followings are for event type
 	parser *replication.BinlogParser // binlog parser
@@ -66,8 +44,8 @@ type TableRecover struct {
 	buffer bytes.Buffer              // byte buffer
 }
 
-// NewTable for outside use
-func NewTable(table, clusterPath string, time int64, ctx context.Context, o *meta.Offset, user, pass string, port int, wg *sync.WaitGroup, errs chan error) (*TableRecover, error) {
+// NewInteger for recover
+func NewInteger(clusterPath string, time int64, ctx context.Context, o *meta.Offset, user, pass string, port int, wg *sync.WaitGroup, errs chan error) (*IntegerRecover, error) {
 	if strings.HasSuffix(clusterPath, "/") {
 		clusterPath = strings.TrimSuffix(clusterPath, "/")
 	}
@@ -84,9 +62,8 @@ func NewTable(table, clusterPath string, time int64, ctx context.Context, o *met
 		return nil, err
 	}
 
-	return &TableRecover{
-		table:  table,
-		path:   fmt.Sprintf("%s/%s", clusterPath, table),
+	return &IntegerRecover{
+		path:   clusterPath,
 		time:   time,
 		ctx:    ctx,
 		off:    o,
@@ -102,17 +79,17 @@ func NewTable(table, clusterPath string, time int64, ctx context.Context, o *met
 }
 
 // ID for routine
-func (t *TableRecover) ID() string {
+func (t *IntegerRecover) ID() string {
 	return fmt.Sprintf("%s/%d", t.path, t.time)
 }
 
 // ExecutedGTID for gtid and timestamp
-func (t *TableRecover) ExecutedGTID() string {
+func (t *IntegerRecover) ExecutedGTID() string {
 	return t.pos.executed.String()
 }
 
 // selectLogs to apply MySQL binlog
-func (t *TableRecover) selectLogs(start, end int64) (int64s, error) {
+func (t *IntegerRecover) selectLogs(start, end int64) (int64s, error) {
 	ss, err := latestTime(start, t.path)
 	if err != nil {
 		log.Errorf("get latestTime log file according timestamp{%d} error{%v}", start, err)
@@ -123,19 +100,19 @@ func (t *TableRecover) selectLogs(start, end int64) (int64s, error) {
 }
 
 // Recover
-func (t *TableRecover) Recover() {
+func (t *IntegerRecover) Recover() {
 	defer func() {
 		if err := recover(); err != nil {
 			if strings.EqualFold(err.(error).Error(), done) {
 				// do nothing
-				log.Infof("recover table {%s} done for timestamp{%d}", t.table, t.time)
+				log.Infof("instance done for timestamp{%d}", t.time)
 			} else if strings.EqualFold(err.(error).Error(), canceled) {
-				log.Info("table {%s} recovery canceled", t.table)
+				log.Info("instance recovery canceled")
 			} else {
 				t.errs <- err.(error)
 			}
 		}
-		log.Infof("table {%s} recover finish", t.table)
+		log.Infof("instance recover finish")
 
 		// close instance
 		if t.i != nil {
@@ -165,7 +142,7 @@ func (t *TableRecover) Recover() {
 	}
 
 	if len(lfs) == 0 {
-		log.Warnf("no logs for table {%s} to recover", t.table)
+		log.Warnf("no logs for instance to recover")
 		return
 	}
 
@@ -175,7 +152,7 @@ func (t *TableRecover) Recover() {
 			panic(fmt.Errorf(canceled))
 		default:
 			if int64(e.Header.Timestamp) > t.time {
-				log.Infof("table{%s}, event pos{%d}, event type{%s}", t.table, e.Header.LogPos, e.Header.EventType)
+				log.Infof("event pos{%d}, event type{%s}", e.Header.LogPos, e.Header.EventType)
 				panic(fmt.Errorf(done))
 			}
 
@@ -295,7 +272,7 @@ func (t *TableRecover) Recover() {
 					// execute
 					bs := t.buffer.Bytes()
 					if err := t.i.Execute(bs); err != nil {
-						log.Errorf("table {%s} execute on gtid{%s} error{%v}", t.table, t.cg.String(), err)
+						log.Errorf("execute on gtid{%s} error{%v}", t.cg.String(), err)
 						panic(err)
 					}
 
@@ -337,12 +314,12 @@ func (t *TableRecover) Recover() {
 		if err := t.parser.ParseFile(lf, 4, onEventFunc); err != nil {
 			if strings.EqualFold(err.Error(), done) {
 				// do nothing
-				log.Infof("recover table {%s} done for timestamp{%d}", t.table, t.time)
+				log.Infof("recover  done for timestamp{%d}", t.time)
 				return
 			}
 
 			if strings.EqualFold(err.Error(), canceled) {
-				log.Info("table {%s} recovery canceled", t.table)
+				log.Info("instance recovery canceled")
 				return
 			}
 

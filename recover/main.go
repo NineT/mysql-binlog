@@ -5,7 +5,6 @@ import (
 	"flag"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/zssky/log"
 
@@ -41,6 +40,9 @@ var (
 
 	// type
 	rt = flag.String("rt", "snapshot", "恢复类型recover type including{recover, snapshot} two kinds")
+
+	// dump for MySQL using separated mode or integrated mode
+	mode = flag.String("mode", "integrated", "separated or integrated 表示是否将每个表的binlog事件独立而不往一个binlog文件写")
 
 	// log level
 	level = flag.String("level", "debug", "日志级别log level {debug/info/warn/error}")
@@ -136,42 +138,24 @@ func main() {
 	// newly context
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// init wait group
-	size := len(tbs)
-	wg := &sync.WaitGroup{}
-	wg.Add(size)
-
 	// init error channels
 	errs := make(chan error, 64)
 	defer close(errs)
 
-	var trs []*res.TableRecover
-	for _, tb := range tbs {
-		tr, err := res.NewTable(tb, c.GetClusterPath(), t, ctx, o, *user, *passwd, 3358, wg, errs)
-		if err != nil {
-			// error occur then exit
-			os.Exit(1)
-		}
-
-		go tr.Recover()
-
-		trs = append(trs, tr)
-
-		log.Infof("start table {%s} recover ", tr.ID())
+	rs, err := res.Recovering(res.RecoverMode(*mode), tbs, c.GetClusterPath(), t, ctx, o, *user, *passwd, 3358, errs)
+	if err != nil {
+		os.Exit(1)
 	}
 
 	go func() {
 		for {
 			select {
-			case <- errs:
+			case <-errs:
 				cancel()
 				os.Exit(1)
 			}
 		}
 	}()
-
-	log.Infof("wait for all to finish")
-	wg.Wait()
 
 	// if just recover then here to return
 	switch *rt {
@@ -210,7 +194,7 @@ func main() {
 		os.Exit(1)
 	}
 	// write newly offset to snapshot directory
-	for _, t := range trs {
+	for _, t := range rs {
 		for _, g := range strings.Split(t.ExecutedGTID(), ",") {
 			g := strings.TrimSpace(g)
 			if strings.EqualFold(g, "") {
