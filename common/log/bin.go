@@ -260,6 +260,8 @@ func (b *BinlogWriter) flushLogs(curr uint32) error {
 	}
 	bts := r.Encode()
 
+	// reset event type, event size, log position 
+	b.lastHeader.EventType = replication.ROTATE_EVENT
 	b.lastHeader.EventSize = uint32(replication.EventHeaderSize) + uint32(len(bts)) + uint32(CRC32Size)
 	b.lastHeader.LogPos = b.logPos
 
