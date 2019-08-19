@@ -1,0 +1,2 @@
+(?i)^CREATE\\s+TRIGGER\\s+.*$
+(?i)^DROP\\s+TRIGGER\\s+.*$

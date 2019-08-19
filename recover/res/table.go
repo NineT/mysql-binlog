@@ -17,9 +17,11 @@ import (
 	"github.com/mysql-binlog/common/inter"
 	clog "github.com/mysql-binlog/common/log"
 	"github.com/mysql-binlog/common/meta"
+	"github.com/mysql-binlog/common/regx"
 	"github.com/mysql-binlog/common/utils"
 
 	"github.com/mysql-binlog/recover/bpct"
+	"github.com/mysql-binlog/recover/conf"
 )
 
 /***
@@ -45,20 +47,21 @@ func (s int64s) Less(i, j int) bool { return s[i] < s[j] }
 
 // TableRecover
 type TableRecover struct {
-	table string          // table name
-	path  string          // table binlog path
-	time  int64           // final time for binlog recover
-	ctx   context.Context // context
-	off   *meta.Offset    // start offset
-	pos   *LogPosition    // log position
-	cg    mysql.GTIDSet   // current gtid set
-	og    mysql.GTIDSet   // origin gtid offset
-	i     *bpct.Instance  // one table one connection
-	user  string          // mysql user
-	pass  string          // mysql pass
-	port  int             // mysql port
-	wg    *sync.WaitGroup // wait group for outside
-	errs  chan error      // error channel
+	table string           // table name
+	path  string           // table binlog path
+	time  int64            // final time for binlog recover
+	ctx   context.Context  // context
+	off   *meta.Offset     // start offset
+	pos   *LogPosition     // log position
+	cg    mysql.GTIDSet    // current gtid set
+	og    mysql.GTIDSet    // origin gtid offset
+	i     *bpct.Instance   // one table one connection
+	user  string           // mysql user
+	pass  string           // mysql pass
+	port  int              // mysql port
+	wg    *sync.WaitGroup  // wait group for outside
+	errs  chan error       // error channel
+	coCh  chan interface{} // coordinate channel
 
 	// followings are for event type
 	parser *replication.BinlogParser // binlog parser
@@ -67,7 +70,7 @@ type TableRecover struct {
 }
 
 // NewTable for outside use
-func NewTable(table, clusterPath string, time int64, ctx context.Context, o *meta.Offset, user, pass string, port int, wg *sync.WaitGroup, errs chan error) (*TableRecover, error) {
+func NewTable(table, clusterPath string, time int64, ctx context.Context, o *meta.Offset, user, pass string, port int, wg *sync.WaitGroup, errs chan error, coCh chan interface{}) (*TableRecover, error) {
 	if strings.HasSuffix(clusterPath, "/") {
 		clusterPath = strings.TrimSuffix(clusterPath, "/")
 	}
@@ -97,6 +100,7 @@ func NewTable(table, clusterPath string, time int64, ctx context.Context, o *met
 		port:   port,
 		wg:     wg,
 		errs:   errs,
+		coCh:   coCh,
 		parser: replication.NewBinlogParser(),
 	}, nil
 }
@@ -222,6 +226,22 @@ func (t *TableRecover) Recover() {
 				case "ROLLBACK":
 				case "SAVEPOINT":
 				default:
+
+					b, err := conf.IsFilteredSQL(qe.Query)
+					if err != nil {
+						log.Warnf("ddl %s filtered check error{%v}", qe.Query, err)
+						panic(err)
+					}
+
+					if b {
+						log.Warnf("ddl %s is filtered", qe.Query)
+						return nil
+					}
+
+					if err := t.coordinate(qe); err != nil {
+						panic(err)
+					}
+
 					if err := t.i.Begin(); err != nil {
 						log.Error(err)
 						panic(err)
@@ -352,4 +372,94 @@ func (t *TableRecover) Recover() {
 			return
 		}
 	}
+}
+
+// coordinate with other table in case of interact influence
+func (t *TableRecover) coordinate(qe *replication.QueryEvent) error {
+	b, err := conf.IsCoordinateSQL(qe.Query)
+	if err != nil {
+		return err
+	}
+
+	// is coordinate sql then retrieve table regs
+	if b {
+		log.Infof("match coordinate sql")
+		tbReg, err := conf.GetTables(qe.Query)
+		if err != nil {
+			return err
+		}
+
+		// ddl related tables
+		ac := make(chan interface{}, 2)
+		t.coCh <- &SyncData{
+			Table:    t.table,
+			GTID:     t.cg.String(),
+			DDL:      qe.Query,
+			AckCh:    ac,
+			TableReg: tbReg,
+		}
+
+		for {
+			select {
+			case <-t.ctx.Done():
+				log.Warnf("context done on table {%s}", t.table)
+				return nil
+			case a := <-ac:
+				d := a.(*AckData)
+				if d.Err != nil {
+					log.Errorf("ack from coordinate error{%v}", d.Err)
+					return d.Err
+				}
+
+				log.Infof("ack from coordinate success full on gtid event{%s}", d.GTID)
+				return nil
+			}
+		}
+	}
+
+	// ddl related to more than 1 tables then it should using coordinator
+	ddlTbs := make(map[string]string)
+	for _, ddl := range bytes.Split(qe.Query, []byte(";")) {
+		if tbs, matched := regx.Parse(ddl, qe.Schema); matched { // 匹配表名成功
+			for _, tb := range tbs {
+				ddlTbs[string(tb)] = string(tb)
+			}
+		}
+	}
+
+	if len(ddlTbs) > 1 {
+		var tbs []string
+		for tb := range ddlTbs {
+			tbs = append(tbs, tb)
+		}
+
+		// ddl related tables
+		ac := make(chan interface{}, 2)
+		t.coCh <- &SyncData{
+			Table:         t.table,
+			GTID:          t.cg.String(),
+			DDL:           qe.Query,
+			AckCh:         ac,
+			RelatedTables: tbs,
+		}
+
+		for {
+			select {
+			case <-t.ctx.Done():
+				log.Warnf("context done on table {%s}", t.table)
+				return nil
+			case a := <-ac:
+				d := a.(*AckData)
+				if d.Err != nil {
+					log.Errorf("ack from coordinate error{%v}", d.Err)
+					return d.Err
+				}
+
+				log.Infof("ack from coordinate success full on all related tables %v", tbs)
+				return nil
+			}
+		}
+	}
+
+	return nil
 }

@@ -2,8 +2,11 @@ package regx
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/zssky/log"
 )
 
 func TestParse(t *testing.T) {
@@ -65,4 +68,12 @@ func TestParse(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestStripQuoteAndAppendDb(t *testing.T) {
+	ddl := "CREATE TRIGGER test01_trig AFTER INSERT ON test01 FOR EACH ROW; BEGIN; DECLARE s1 VARCHAR(40) CHARACTER SET utf8; END"
+
+	expCreateIndex = regexp.MustCompile("(?i)^CREATE\\s+TRIGGER.*$")
+	mb := expCreateIndex.Match([]byte(ddl))
+	log.Infof("is matched ? %v", mb)
 }

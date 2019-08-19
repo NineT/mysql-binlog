@@ -1,0 +1,2 @@
+(?i)^DROP\\s+DATABASE\\s+.*$
+(?i)^CREATE\\s+DATABASE\\s+.*$

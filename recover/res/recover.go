@@ -32,6 +32,11 @@ type Recover interface {
 func Recovering(mode RecoverMode, tbs []string, clusterPath string, time int64, ctx context.Context, o *meta.Offset, user, pass string, port int, errs chan error) ([]Recover, error) {
 	switch mode {
 	case separated:
+		co, err := NewCoordinator(user, pass, port, time, o, clusterPath, tbs, ctx, errs)
+		if err != nil {
+			log.Errorf("create coordinator error {%v}", err)
+		}
+
 		// init wait group
 		size := len(tbs)
 		wg := &sync.WaitGroup{}
@@ -39,7 +44,7 @@ func Recovering(mode RecoverMode, tbs []string, clusterPath string, time int64, 
 
 		var trs []Recover
 		for _, tb := range tbs {
-			tr, err := NewTable(tb, clusterPath, time, ctx, o, user, pass, port, wg, errs)
+			tr, err := NewTable(tb, clusterPath, time, ctx, o, user, pass, port, wg, errs, co.SyncCh)
 			if err != nil {
 				// error occur then exit
 				os.Exit(1)
