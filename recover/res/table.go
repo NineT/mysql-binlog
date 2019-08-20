@@ -226,20 +226,25 @@ func (t *TableRecover) Recover() {
 				case "ROLLBACK":
 				case "SAVEPOINT":
 				default:
-
-					b, err := conf.IsFilteredSQL(qe.Query)
+					isf, err := conf.IsFilteredSQL(qe.Query)
 					if err != nil {
 						log.Warnf("ddl %s filtered check error{%v}", qe.Query, err)
 						panic(err)
 					}
 
-					if b {
-						log.Warnf("ddl %s is filtered", qe.Query)
+					if isf { // is filtered sql
+						log.Warnf("ddl {%s} is filtered no need to execute", qe.Query)
 						return nil
 					}
 
-					if err := t.coordinate(qe); err != nil {
+					isC, err := t.coordinate(qe)
+					if err != nil {
 						panic(err)
+					}
+
+					if isC { // is coordinate sql
+						log.Warnf("sql {%s} executed on coordinator", qe.Query)
+						return nil
 					}
 
 					if err := t.i.Begin(); err != nil {
@@ -374,11 +379,11 @@ func (t *TableRecover) Recover() {
 	}
 }
 
-// coordinate with other table in case of interact influence
-func (t *TableRecover) coordinate(qe *replication.QueryEvent) error {
+// coordinate with other table in case of interact influence on ddl
+func (t *TableRecover) coordinate(qe *replication.QueryEvent) (bool, error) {
 	flag, tbReg, err := conf.IsCoordinateSQL(qe.Query)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// is coordinate sql then retrieve table regs
@@ -399,16 +404,16 @@ func (t *TableRecover) coordinate(qe *replication.QueryEvent) error {
 			select {
 			case <-t.ctx.Done():
 				log.Warnf("context done on table {%s}", t.table)
-				return nil
+				return true, nil
 			case a := <-ac:
 				d := a.(*AckData)
 				if d.Err != nil {
 					log.Errorf("ack from coordinate error{%v}", d.Err)
-					return d.Err
+					return true, d.Err
 				}
 
 				log.Infof("ack from coordinate success full on gtid event{%s}", d.GTID)
-				return nil
+				return true, nil
 			}
 		}
 	}
@@ -444,19 +449,19 @@ func (t *TableRecover) coordinate(qe *replication.QueryEvent) error {
 			select {
 			case <-t.ctx.Done():
 				log.Warnf("context done on table {%s}", t.table)
-				return nil
+				return true, nil
 			case a := <-ac:
 				d := a.(*AckData)
 				if d.Err != nil {
 					log.Errorf("ack from coordinate error{%v}", d.Err)
-					return d.Err
+					return true, d.Err
 				}
 
 				log.Infof("ack from coordinate success full on all related tables %v", tbs)
-				return nil
+				return true, nil
 			}
 		}
 	}
 
-	return nil
+	return false, nil
 }

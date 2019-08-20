@@ -81,11 +81,19 @@ func main() {
 		log.Warnf("no table timestamp < parameter timestamp {%d}", t)
 	}
 
-	tbs, err := c.SelectTables(*db, *tb)
+	// recover tables
+	rtbs, err := c.SelectTables(*db, *tb)
 	if err != nil {
 		os.Exit(1)
 	}
-	log.Infof("tables {%v} match reg{%s.%s}", tbs, *db, *tb)
+	log.Infof("tables {%v} match reg{%s.%s}", rtbs, *db, *tb)
+
+	// total tables
+	ttbs, err := c.SelectTables(".*", ".*")
+	if err != nil {
+		os.Exit(1)
+	}
+	log.Debugf("take total {%v} tables {%s.%s}", ttbs, ".*", ".*")
 
 	// take the 1st offset
 	s, err := ss.NewSnapshot(*path, *clusterID, t)
@@ -142,7 +150,7 @@ func main() {
 	errs := make(chan error, 64)
 	defer close(errs)
 
-	rs, err := res.Recovering(res.RecoverMode(*mode), tbs, c.GetClusterPath(), t, ctx, o, *user, *passwd, 3358, errs)
+	rs, err := res.Recovering(res.RecoverMode(*mode), rtbs, ttbs, c.GetClusterPath(), t, ctx, o, *user, *passwd, 3358, errs)
 	if err != nil {
 		os.Exit(1)
 	}

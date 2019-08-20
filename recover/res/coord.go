@@ -17,7 +17,7 @@ import (
 /***
 * coordinates for ddl conflict
 * eg: RENAME TABLE `b2b_trade100`.`b2b_order_main` TO `b2b_trade100`.`_b2b_order_main_old`, `b2b_trade100`.`_b2b_order_main_new` TO `b2b_trade100`.`b2b_order_main`"
-* cross three tables including three threads
+* cross three tables including tow threads
 */
 
 // Coordinator
@@ -28,14 +28,17 @@ type Coordinator struct {
 	inst    *bpct.Instance                // instance
 	counter map[string]int                // counter
 	acks    map[string][]chan interface{} // ack channels
-	tables map[string]string              // tables
-	time   int64                          // final time for binlog recover
-	off    *meta.Offset                   // start offset
-	path   string                         // table binlog path
-	user   string                         // mysql user
-	pass   string                         // mysql pass
-	port   int                            // mysql port
-	errs   chan error                     // error channel
+
+	totalTables   map[string]string // total tables
+	recoverTables map[string]string // tables
+
+	time int64        // final time for binlog recover
+	off  *meta.Offset // start offset
+	path string       // table binlog path
+	user string       // mysql user
+	pass string       // mysql pass
+	port int          // mysql port
+	errs chan error   // error channel
 }
 
 // SyncData coordinate request
@@ -55,34 +58,41 @@ type AckData struct {
 }
 
 // NewCoordinator for table syncer
-func NewCoordinator(user, pass string, port int, time int64, off *meta.Offset, clusterPath string, tbs []string, wg *sync.WaitGroup, ctx context.Context, errs chan error) (*Coordinator, error) {
+func NewCoordinator(user, pass string, port int, time int64, off *meta.Offset, clusterPath string, rtbs, ttbs []string, wg *sync.WaitGroup, ctx context.Context, errs chan error) (*Coordinator, error) {
 	i, err := bpct.NewInstance(user, pass, port)
 	if err != nil {
 		log.Errorf("new coordinator Err{%v}", err)
 		return nil, err
 	}
 
-	tables := make(map[string]string)
-	for _, tb := range tbs {
-		tables[tb] = tb
+	// recover tables
+	recoverTbs := make(map[string]string)
+	for _, tb := range rtbs {
+		recoverTbs[tb] = tb
+	}
+
+	// total tables
+	totalTbs := make(map[string]string)
+	for _, tb := range ttbs {
+		totalTbs[tb] = tb
 	}
 
 	return &Coordinator{
-		SyncCh:  make(chan interface{}, 64),
-		ctx:     ctx,
-		wg:      wg,
-		inst:    i,
-		counter: make(map[string]int),
+		ctx:           ctx,
+		wg:            wg,
+		inst:          i,
+		recoverTables: recoverTbs,
+		totalTables:   totalTbs,
+		time:          time,
+		off:           off,
+		path:          clusterPath,
+		user:          user,
+		pass:          pass,
+		port:          port,
+		errs:          errs,
+		SyncCh:        make(chan interface{}, 64),
+		counter:       make(map[string]int),
 		acks: make(map[string][]chan interface{}),
-		tables: tables,
-
-		time: time,
-		off:  off,
-		path: clusterPath,
-		user: user,
-		pass: pass,
-		port: port,
-		errs: errs,
 	}, nil
 }
 
@@ -106,11 +116,21 @@ func (c *Coordinator) Sync() {
 			d := s.(*SyncData)
 
 			if d.TableReg != "" {
-				// take related tables
+				// 匹配所有的表
 				var rtbs []string
 				reg := regexp.MustCompile(d.TableReg)
-				for _, t := range c.tables {
+				for _, t := range c.totalTables { // find in total table
 					if reg.Match([]byte(t)) {
+						rtbs = append(rtbs, t)
+					}
+				}
+				d.RelatedTables = rtbs
+			} else {
+				// 检查 表是否存在集合 过滤出存在且有关联关系的表
+				var rtbs []string
+				for _, t := range d.RelatedTables {
+					if _, ok := c.totalTables[t]; ok {
+						// table should exist on total tables list
 						rtbs = append(rtbs, t)
 					}
 				}
@@ -120,9 +140,9 @@ func (c *Coordinator) Sync() {
 			// std table
 			tb := inter.CharStd(strings.TrimSpace(d.Table))
 
-			// check all table is on recovering
-			if _, ok := c.tables[tb]; !ok {
-				// todo start table recover in case not exist
+			// 不在恢復列表當中 則需要开启到恢复列表中
+			if _, ok := c.recoverTables[tb]; !ok {
+				// to start table recover in case not recovering
 				c.wg.Add(1)
 
 				// table on recovering
@@ -137,7 +157,7 @@ func (c *Coordinator) Sync() {
 				}
 
 				go tr.Recover()
-				c.tables[tb] = tb
+				c.recoverTables[tb] = tb
 			}
 
 			// remember channel as the communicator between coordinator and table routing

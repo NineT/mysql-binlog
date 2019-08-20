@@ -6,12 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xwb1989/sqlparser"
 	"github.com/zssky/log"
 )
 
 func TestParse(t *testing.T) {
 	ddls := []string{
 		"create table test02 like test.test1",
+		"RENAME TABLE `b2b_trade100`.`b2b_order_main` TO `b2b_trade100`.`_b2b_order_main_old`, `b2b_trade100`.`_b2b_order_main_new` TO `b2b_trade100`.`b2b_order_main`",
 
 		//"ALTER TABLE sbtest1 ADD COLUMN name VARCHAR(100) DEFAULT NULL COMMENT '姓名'",
 
@@ -71,9 +73,22 @@ func TestParse(t *testing.T) {
 }
 
 func TestStripQuoteAndAppendDb(t *testing.T) {
-	ddl := "CREATE TRIGGER test01_trig AFTER INSERT ON test01 FOR EACH ROW; BEGIN; DECLARE s1 VARCHAR(40) CHARACTER SET utf8; END"
+	ddl := "CREATE DEFINER=`root`@`%` TRIGGER test01_trig AFTER INSERT ON test01 FOR EACH ROW; BEGIN; DECLARE s1 VARCHAR(40) CHARACTER SET utf8; END"
 
 	expCreateIndex = regexp.MustCompile("(?i)^CREATE\\s+TRIGGER.*$")
 	mb := expCreateIndex.Match([]byte(ddl))
 	log.Infof("is matched ? %v", mb)
+
+	sql := "CREATE DEFINER=`root`@`%` TRIGGER `pt_osc_test_test_type_del` AFTER DELETE ON `test`.`test_type` FOR EACH ROW DELETE IGNORE FROM `test`.`_test_type_new` WHERE `test`.`_test_type_new`.`id` <=> OLD.`id`"
+
+	stmt, err := sqlparser.Parse(sql)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	switch st := stmt.(type) {
+	case *sqlparser.DDL:
+	case *sqlparser.DBDDL:
+		fmt.Println(st.DBName)
+	}
 }

@@ -29,5 +29,5 @@ clean:
 	@rm -rf backup 
 
 backup:
-	go build -o $@ -ldflags '$(LDFLAGS)' 
+	@rm -rf backup && go build -o $@ -ldflags '$(LDFLAGS)' 
 

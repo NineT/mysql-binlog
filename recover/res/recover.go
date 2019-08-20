@@ -18,7 +18,7 @@ const (
 	separated RecoverMode = "separated"
 
 	// integer means all binlog file into one whole style
-	integer RecoverMode = "integer"
+	integer RecoverMode = "integrated"
 )
 
 // Recover for tables or integer
@@ -29,22 +29,22 @@ type Recover interface {
 }
 
 // Recovering
-func Recovering(mode RecoverMode, tbs []string, clusterPath string, time int64, ctx context.Context, o *meta.Offset, user, pass string, port int, errs chan error) ([]Recover, error) {
+func Recovering(mode RecoverMode, rtbs, ttbs []string, clusterPath string, time int64, ctx context.Context, o *meta.Offset, user, pass string, port int, errs chan error) ([]Recover, error) {
 	switch mode {
 	case separated:
 		cwg := &sync.WaitGroup{}
-		co, err := NewCoordinator(user, pass, port, time, o, clusterPath, tbs, cwg, ctx, errs)
+		co, err := NewCoordinator(user, pass, port, time, o, clusterPath, rtbs, ttbs, cwg, ctx, errs)
 		if err != nil {
 			log.Errorf("create coordinator error {%v}", err)
 		}
 
 		// init wait group
-		size := len(tbs)
+		size := len(rtbs)
 		wg := &sync.WaitGroup{}
 		wg.Add(size)
 
 		var trs []Recover
-		for _, tb := range tbs {
+		for _, tb := range rtbs {
 			tr, err := NewTable(tb, clusterPath, time, ctx, o, user, pass, port, wg, errs, co.SyncCh)
 			if err != nil {
 				// error occur then exit
