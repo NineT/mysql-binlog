@@ -1,9 +1,9 @@
 package inter
 
 import (
-	"bytes"
-	"container/list"
+	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -221,149 +221,33 @@ func Exists(f string) bool {
 }
 
 // LastLine data for file
-func LastLine(name string) ([]byte, error) {
-	st, err := os.Stat(name) //os.Stat获取文件信息
-	flag := true
+func LastLine(name string) (string, error) {
+	f, err := os.Open(name)
 	if err != nil {
-		if os.IsExist(err) {
-			flag = true
-		}
-		flag = false
-	}
-
-	if !flag {
-		log.Warnf("file %s not exists", name)
-		return nil, nil
-	}
-
-	// file size
-	size := int64(st.Size())
-	if size == 0 {
-		// file size is empty
-		log.Warnf("file{%s} is empty ", name)
-		return nil, nil
-	}
-
-	f, err := os.OpenFile(name, os.O_RDONLY, FileMode)
-	if err != nil {
-		log.Errorf("open file{%s} error{%v}", name, err)
-		return nil, err
+		log.Errorf("open file {%s} error{%v}", name, err)
+		return "", err
 	}
 	defer f.Close()
 
-	data := list.New()
-
-	// default read buffer size
-	gap := int64(100)
-	rbs := int64(gap)
-
-	// start position
-	start, err := lineOffset(gap, -1 * rbs, size, f)
-	if err != nil {
-		log.Errorf("find the last line offset error{%v}", err)
-		return nil, err
-	}
-
-	// flag
-	right := false
-	for !right {
-		if start+size <= 0 {
-			if -1 * start < rbs {
-				// first no loop using yet
-				rbs = -1 * start
-			} else {
-				// read to start
-				rbs = start + rbs + size
-			}
-			start = -1 * size
+	var l string
+	buff := bufio.NewReader(f)
+	for {
+		line, err := buff.ReadString('\n')
+		if err != nil && err != io.EOF {
+			log.Errorf("read line {%s} error {%v}", line, err)
+			return "", err
 		}
 
-		log.Debugf("[%d, %d]", start, start-size)
-
-		if _, err := f.Seek(start, 2); err != nil {
-			log.Errorf("fseek (%d, 2) error %v", start, err)
-			return nil, err
+		line = strings.TrimSpace(line)
+		if line != "" {
+			l = line
 		}
 
-		// buffer for reading cache
-		buff := make([]byte, rbs)
-
-		if _, err := f.Read(buff); err != nil {
-			log.Errorf("read bytes from file{%s} error{%v}", name, err)
-			return nil, err
-		}
-
-		idx := 0
-		for i, b := range buff {
-			switch {
-			case start+size == 0:
-				idx = -1
-				right = true
-			case b == '\n':
-				idx = i
-				// get the right position
-				right = true
-			}
-		}
-
-		if right {
-			data.PushFront(buff[idx+1:])
-		} else {
-			// put buffer to the front
-			data.PushFront(buff)
-			start = start - rbs
-		}
-	}
-
-	log.Debugf("total file size{%d} start{%d}", st.Size(), start)
-
-	b := bytes.NewBuffer(nil)
-	for e := data.Front(); e != nil; e = e.Next() {
-		if _, err := b.Write(e.Value.([]byte)); err != nil {
-			log.Errorf("composite bytes from file{%s} error %v", name, err)
-			return nil, err
+		if err == io.EOF {
+			break
 		}
 	}
 
 	// remove empty bytes and remove line enter
-	return bytes.TrimSuffix(bytes.TrimSuffix(b.Bytes(), []byte{0}), []byte{'\n'}), nil
-}
-
-func lineOffset(gap, start, size int64, f *os.File) (int64, error) {
-	if -1 * start > size {
-		start = -1 * size
-	}
-
-	// take the not enter char
-	skip := int64(0)
-	cs := make([]byte, 100)
-outer:
-	for {
-		if _, err := f.Seek(start, 2); err != nil {
-			log.Errorf("fseek (%d, 2) error %v", start, err)
-			return 0, err
-		}
-
-		// buffer for reading cache
-		n, err := f.Read(cs)
-		if err != nil {
-			log.Errorf("read bytes from file{%s} error{%v}", f.Name(), err)
-			return 0, err
-		}
-
-		for i := n - 1; i >= 0; i-- {
-			switch cs[i] {
-			case '\n':
-			default:
-				skip += int64(n - i)
-				break outer
-			}
-		}
-		start = start - gap
-	}
-
-	log.Infof("start = %d, skip=%d", start, skip)
-
-	// skip the last EOF bytes
-	return start - skip + 1, nil
+	return strings.TrimSpace(l), nil
 }

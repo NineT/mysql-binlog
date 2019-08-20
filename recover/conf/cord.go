@@ -53,20 +53,18 @@ func IsCoordinateSQL(sql []byte) (bool, string, error) {
 		}
 
 		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+		if line != "" {
+			cord := &Cord{}
+			if err := json.Unmarshal([]byte(line), cord); err != nil {
+				log.Errorf("unmarshal data {%s}error {%v}", line, err)
+				return false, "", err
+			}
+
+			cord.reg = regexp.MustCompile(cord.Reg)
+			cord.Level = strings.ToUpper(cord.Level)
+			cords = append(cords, cord)
 		}
 
-		cord := &Cord{}
-
-		if err := json.Unmarshal([]byte(line), cord); err != nil {
-			log.Errorf("unmarshal data {%s}error {%v}", line, err)
-			return false, "", err
-		}
-
-		cord.reg = regexp.MustCompile(cord.Reg)
-		cord.Level = strings.ToUpper(cord.Level)
-		cords = append(cords, cord)
 		if err == io.EOF {
 			break
 		}

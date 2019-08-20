@@ -38,10 +38,9 @@ func IsFilteredSQL(ddl []byte) (bool, error) {
 		}
 
 		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+		if line != "" {
+			regs = append(regs, regexp.MustCompile(line))
 		}
-		regs = append(regs, regexp.MustCompile(line))
 
 		if err == io.EOF {
 			break
