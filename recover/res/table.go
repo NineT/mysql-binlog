@@ -376,21 +376,17 @@ func (t *TableRecover) Recover() {
 
 // coordinate with other table in case of interact influence
 func (t *TableRecover) coordinate(qe *replication.QueryEvent) error {
-	b, err := conf.IsCoordinateSQL(qe.Query)
+	flag, tbReg, err := conf.IsCoordinateSQL(qe.Query)
 	if err != nil {
 		return err
 	}
 
 	// is coordinate sql then retrieve table regs
-	if b {
+	if flag {
 		log.Infof("match coordinate sql")
-		tbReg, err := conf.GetTables(qe.Query)
-		if err != nil {
-			return err
-		}
-
 		// ddl related tables
 		ac := make(chan interface{}, 2)
+		defer close(ac) // close ack channel
 		t.coCh <- &SyncData{
 			Table:    t.table,
 			GTID:     t.cg.String(),
@@ -435,6 +431,7 @@ func (t *TableRecover) coordinate(qe *replication.QueryEvent) error {
 
 		// ddl related tables
 		ac := make(chan interface{}, 2)
+		defer close(ac)
 		t.coCh <- &SyncData{
 			Table:         t.table,
 			GTID:          t.cg.String(),

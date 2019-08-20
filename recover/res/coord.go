@@ -23,6 +23,7 @@ import (
 // Coordinator
 type Coordinator struct {
 	SyncCh  chan interface{}              // SyncCh channel for SyncData
+	wg      *sync.WaitGroup               // wait group for new adding
 	ctx     context.Context               // ctx Context
 	inst    *bpct.Instance                // instance
 	counter map[string]int                // counter
@@ -54,7 +55,7 @@ type AckData struct {
 }
 
 // NewCoordinator for table syncer
-func NewCoordinator(user, pass string, port int, time int64, off *meta.Offset, clusterPath string, tbs []string, ctx context.Context, errs chan error) (*Coordinator, error) {
+func NewCoordinator(user, pass string, port int, time int64, off *meta.Offset, clusterPath string, tbs []string, wg *sync.WaitGroup, ctx context.Context, errs chan error) (*Coordinator, error) {
 	i, err := bpct.NewInstance(user, pass, port)
 	if err != nil {
 		log.Errorf("new coordinator Err{%v}", err)
@@ -67,8 +68,9 @@ func NewCoordinator(user, pass string, port int, time int64, off *meta.Offset, c
 	}
 
 	return &Coordinator{
-		ctx:     ctx,
 		SyncCh:  make(chan interface{}, 64),
+		ctx:     ctx,
+		wg:      wg,
 		inst:    i,
 		counter: make(map[string]int),
 		acks: make(map[string][]chan interface{}),
@@ -121,12 +123,12 @@ func (c *Coordinator) Sync() {
 			// check all table is on recovering
 			if _, ok := c.tables[tb]; !ok {
 				// todo start table recover in case not exist
-				wg := &sync.WaitGroup{}
-				wg.Add(1)
+				c.wg.Add(1)
 
 				// table on recovering
 				log.Warnf("table {%s} no on recovering list now to start", d.Table)
-				tr, err := NewTable(tb, c.path, c.time, c.ctx, c.off, c.user, c.pass, c.port, wg, c.errs, c.SyncCh)
+
+				tr, err := NewTable(tb, c.path, c.time, c.ctx, c.off, c.user, c.pass, c.port, c.wg, c.errs, c.SyncCh)
 				if err != nil {
 					// error occur then exit
 					log.Errorf("error for table {%s} recover error{%v}", tb, err)

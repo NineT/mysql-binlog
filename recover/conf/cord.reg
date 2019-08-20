@@ -1,2 +1,2 @@
-(?i)^DROP\\s+DATABASE\\s+.*$
-(?i)^CREATE\\s+DATABASE\\s+.*$
+{"reg":"(?i)^DROP\\s+DATABASE\\s+.*$", "level":"DB"}
+{"reg":"(?i)^CREATE\\s+DATABASE\\s+.*$", "level":"DB"}

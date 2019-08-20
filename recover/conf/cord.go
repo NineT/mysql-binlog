@@ -2,6 +2,7 @@ package conf
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -19,25 +20,36 @@ import (
 
 const (
 	cordName = "conf/cord.reg"
+
+	cordLevelDB = "DB"
+
+	cordLevelAll = "ALL"
 )
 
+// Cord for table level
+type Cord struct {
+	Reg   string         `json:"reg"`   // regular
+	Level string         `json:"level"` // level including DB, All etc.
+	reg   *regexp.Regexp `json:"-"`
+}
+
 // IsCoordinateSQL
-func IsCoordinateSQL(sql []byte) (bool, error) {
+func IsCoordinateSQL(sql []byte) (bool, string, error) {
 	f, err := os.Open(cordName)
 	if err != nil {
 		log.Errorf("open file {%s} error{%v}", cordName, err)
-		return false, err
+		return false, "", err
 	}
 	defer f.Close()
 
-	var regs []*regexp.Regexp
+	var cords []*Cord
 
 	buff := bufio.NewReader(f)
 	for {
 		line, err := buff.ReadString('\n')
 		if err != nil && err != io.EOF {
 			log.Errorf("read line {%s} error {%v}", line, err)
-			return false, err
+			return false, "", err
 		}
 
 		line = strings.TrimSpace(line)
@@ -45,35 +57,43 @@ func IsCoordinateSQL(sql []byte) (bool, error) {
 			continue
 		}
 
-		regs = append(regs, regexp.MustCompile(line))
+		cord := &Cord{}
 
+		if err := json.Unmarshal([]byte(line), cord); err != nil {
+			log.Errorf("unmarshal data {%s}error {%v}", line, err)
+			return false, "", err
+		}
+
+		cord.reg = regexp.MustCompile(cord.Reg)
+		cord.Level = strings.ToUpper(cord.Level)
+		cords = append(cords, cord)
 		if err == io.EOF {
 			break
 		}
 	}
 
-	for _, re := range regs {
-		if re.Match(sql) {
-			log.Infof("sql {%s} match regular {%s} success", sql, re.String())
-			return true, nil
+	for _, co := range cords {
+		reg := regexp.MustCompile(co.Reg)
+		if reg.Match(sql) {
+			log.Infof("sql {%s} match regular {%s} success", sql, reg.String())
+
+			stmt, err := sqlparser.Parse(string(sql))
+			if err != nil {
+				log.Errorf("parse ddl %s error{%v}", sql, err)
+				return false, "", err
+			}
+
+			switch co.Level {
+			case cordLevelDB:
+				switch st := stmt.(type) {
+				case *sqlparser.DBDDL:
+					return true, fmt.Sprintf("%s\\..*", st.DBName), nil
+				}
+			}
+
+			// all tables are matched
+			return true, ".*\\..*", nil
 		}
 	}
-
-	return false, nil
-}
-
-// GetTables according to sql type
-func GetTables(ddl []byte) (string, error) {
-	stmt, err := sqlparser.Parse(string(ddl))
-	if err != nil {
-		log.Errorf("parse ddl %s error{%v}", ddl, err)
-		return "", err
-	}
-
-	switch st := stmt.(type) {
-	case *sqlparser.DBDDL:
-		return fmt.Sprintf("%s\\..*", st.DBName), nil
-	}
-
-	return "", nil
+	return false, "", nil
 }

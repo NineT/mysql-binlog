@@ -1,7 +1,6 @@
 package conf
 
 import (
-	"regexp"
 	"testing"
 
 	"github.com/zssky/log"
@@ -10,6 +9,10 @@ import (
 func TestIsCoordinateSQL(t *testing.T) {
 	sql := []byte("drop database pengan")
 
-	reg := regexp.MustCompile("(?i)^DROP\\s+DATABASE\\s+.*$")
-	log.Infof("%v", reg.Match(sql))
+	b, reg, err := IsCoordinateSQL(sql)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Infof("is coordinate sql ? %v, table regular is %s", b, reg)
 }
