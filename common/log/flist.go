@@ -126,7 +126,7 @@ func (l *LogList) Tail() (int64, error) {
 		return 0, err
 	}
 
-	if b == nil {
+	if b == "" {
 		// file is empty
 		log.Warnf("file {%s} is empty", l.FullName)
 		return 0, nil

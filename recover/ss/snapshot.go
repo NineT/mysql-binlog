@@ -225,7 +225,7 @@ func (s *Snapshot) Offset() (*meta.Offset, error) {
 	}
 
 	o := &meta.Offset{}
-	if err := json.Unmarshal(bt, o); err != nil {
+	if err := json.Unmarshal([]byte(bt), o); err != nil {
 		log.Errorf("unmarshal data {%s} error{%v}", string(bt), err)
 		return nil, err
 	}

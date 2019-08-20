@@ -90,7 +90,7 @@ func (c *Cluster) CheckTime(ts int64) (bool, error) {
 
 		// take newly offset
 		off := &clog.IndexOffset{}
-		if err := json.Unmarshal(o, off); err != nil {
+		if err := json.Unmarshal([]byte(o), off); err != nil {
 			log.Errorf("unmarshal json{%s} error %v", string(o), err)
 			return false, err
 		}

@@ -142,14 +142,14 @@ func (w *IndexWriter) Tail() (*IndexOffset, error) {
 		return nil, err
 	}
 
-	if b == nil {
+	if b == "" {
 		//
 		log.Warnf("empty file{%s} ", name)
 		return nil, nil
 	}
 
 	o := &IndexOffset{}
-	if err := json.Unmarshal(b, o); err != nil {
+	if err := json.Unmarshal([]byte(b), o); err != nil {
 		log.Errorf("unmarshal json{%s} error %v", string(b), err)
 		return nil, err
 	}
