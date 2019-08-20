@@ -1,7 +1,6 @@
 package log
 
 import (
-	"bytes"
 	"compress/zlib"
 	"encoding/binary"
 	"fmt"
@@ -145,41 +144,6 @@ func RecoverWriter(path, table string, curr, logPos uint32, desc *DataEvent) (*B
 
 	// return writer
 	return w, nil
-}
-
-// GenQueryEvent using query event
-func GenQueryEvent(e *replication.BinlogEvent, ddl []byte, checksumAlg byte) (*replication.BinlogEvent, error) {
-	if e.Header.EventType != replication.QUERY_EVENT {
-		return nil, fmt.Errorf("error event type %s", e.Header.EventType)
-	}
-
-	// raw data
-	raw := e.RawData
-	header := e.Header
-
-	qe := e.Event.(*replication.QueryEvent)
-	event := &replication.QueryEvent{}
-	qe.Query = ddl
-
-	qb := qe.Encode()
-	if err := event.Decode(qb); err != nil {
-		log.Errorf("query event{%s} encode error %v", string(ddl), err)
-		return nil, err
-	}
-
-	b := bytes.NewBuffer(nil)
-	b.Write(raw[:replication.EventHeaderSize])
-	b.Write(qb)
-	if checksumAlg == replication.BINLOG_CHECKSUM_ALG_CRC32 {
-		// read the last crc32 bytes
-		b.Write(raw[len(raw)-CRC32Size:])
-	}
-
-	return &replication.BinlogEvent{
-		Header:  header.Copy(),
-		Event:   qe,
-		RawData: b.Bytes(),
-	}, nil
 }
 
 // Binlog2Data: data event from binlog event for sinGtid, intGtid each one is an copy

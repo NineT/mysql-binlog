@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bytes"
 	"container/list"
 	"fmt"
 	"github.com/mysql-binlog/backup/conf"
@@ -262,35 +261,28 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 				}
 
 				// single log for each table
-				for _, ddl := range bytes.Split(qe.Query, []byte(";")) {
-					if tbs, matched := regx.Parse(ddl, qe.Schema); matched { // 匹配表名成功
-						for _, tb := range tbs {
-							// write table to table
-							mc.relatedTables[string(tb)] = true
+				if tbs, matched := regx.Parse(qe.Query, qe.Schema); matched { // 匹配表名成功
+					for _, tb := range tbs {
+						// write table to table
+						mc.relatedTables[string(tb)] = true
 
-							// write ddl to table handler
-							qe, err := blog.GenQueryEvent(ev, ddl, mc.checksumAlg)
-							if err != nil {
-								debug.PrintStack()
-								panic(err)
-							}
-							mc.writeQueryEvent(tb, qe)
-						}
-
-						log.Debug("push offset to position list")
-						c = len(tbs)
-					} else {
-						// common packet with ddl write to each table
-						log.Debug("not matched")
-						for _, h := range mc.tableHandlers {
-							// gtid
-							h.EventChan <- mc.latestGtid.Copy()
-
-							// ddl event
-							h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
-						}
-						c = len(mc.tableHandlers)
+						// write ddl to table handler
+						mc.writeQueryEvent(tb, ev)
 					}
+
+					log.Debug("push offset to position list")
+					c = len(tbs)
+				} else {
+					// common packet with ddl write to each table
+					log.Debug("not matched")
+					for _, h := range mc.tableHandlers {
+						// gtid
+						h.EventChan <- mc.latestGtid.Copy()
+
+						// ddl event
+						h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
+					}
+					c = len(mc.tableHandlers)
 				}
 			}
 
