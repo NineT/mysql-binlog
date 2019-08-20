@@ -67,7 +67,7 @@ func main() {
 	log.Infof("path path{%s}, cluster id {%d}, db {%s}, table{%s}, user{%s}, time{%s}, log level{%s}", *path, *clusterID, *db, *tb, *user, *time, *level)
 	t := inter.ParseTime(*time)
 
-	c := ss.NewCluster(*path, *clusterID)
+	c := ss.NewCluster(*path, *mode, *clusterID)
 	// check timestamp
 	b, err := c.CheckTime(t)
 	if err != nil {

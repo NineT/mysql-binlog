@@ -105,6 +105,12 @@ const (
 
 	// public folder means: that all data should use the public ddl when restore data from storage
 	Public = "public"
+
+	// separated
+	Separated = "separated"
+
+	// integer means all binlog file into one whole style
+	Integrated = "integrated"
 )
 
 // AbsolutePath 绝对路径
