@@ -38,6 +38,9 @@ func Recovering(mode RecoverMode, rtbs, ttbs []string, clusterPath string, time 
 			log.Errorf("create coordinator error {%v}", err)
 		}
 
+		// start coordinator sync
+		go co.Sync()
+
 		// init wait group
 		size := len(rtbs)
 		wg := &sync.WaitGroup{}
