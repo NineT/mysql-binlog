@@ -3,7 +3,6 @@ package handler
 import (
 	"container/list"
 	"fmt"
-	"github.com/mysql-binlog/backup/conf"
 	"runtime/debug"
 	"strings"
 	"sync/atomic"
@@ -21,6 +20,7 @@ import (
 	"github.com/mysql-binlog/common/regx"
 
 	"github.com/mysql-binlog/backup/binlog"
+	"github.com/mysql-binlog/backup/conf"
 )
 
 // MergeConfig merge conf
