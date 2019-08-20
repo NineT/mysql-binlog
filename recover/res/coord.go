@@ -106,7 +106,7 @@ func (c *Coordinator) Sync() {
 			log.Warnf("context done for Coordinator")
 			return
 		case s, hasMore := <-c.SyncCh:
-			if hasMore {
+			if !hasMore {
 				// channel is closed
 				log.Warnf("channel on coordinator is closed")
 				return
