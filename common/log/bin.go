@@ -43,12 +43,14 @@ const (
 
 // DataEvent
 type DataEvent struct {
-	Header   *replication.EventHeader // event header
-	Data     []byte                   // data
-	ExedGtid []byte                   // executed gtid eg. offset.IngGtid
-	TrxGtid  []byte                   // transaction gtid eg. Offset.sinGtid
-	BinFile  string                   // binlog file
-	IsDDL    bool                     // is ddl to
+	Header     *replication.EventHeader     // event header
+	RowsHeader *replication.RowsEventHeader // rows header
+	Data       []byte                       // data
+	ExedGtid   []byte                       // executed gtid eg. offset.IngGtid
+	TrxGtid    []byte                       // transaction gtid eg. Offset.sinGtid
+	BinFile    string                       // binlog file
+	IsDDL      bool                         // is ddl to
+	IsCommit   bool                         // is commit event
 }
 
 // Binlog 每个生成的binlog文件都对应一个结构
@@ -147,7 +149,9 @@ func RecoverWriter(path, table string, curr, logPos uint32, desc *DataEvent) (*B
 }
 
 // Binlog2Data: data event from binlog event for sinGtid, intGtid each one is an copy
-func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, trxGtid, exedGtid []byte, binFile string, ddl bool) *DataEvent {
+func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, trxGtid, exedGtid []byte, binFile string, ddl, isCommit bool) *DataEvent {
+	var rh *replication.RowsEventHeader
+
 	switch ev.Header.EventType {
 	case replication.WRITE_ROWS_EVENTv0,
 		replication.WRITE_ROWS_EVENTv1,
@@ -167,26 +171,32 @@ func Binlog2Data(ev *replication.BinlogEvent, checksumAlg byte, trxGtid, exedGti
 		binary.LittleEndian.PutUint16(fs, re.Flags)
 		ev.RawData[replication.EventHeaderSize+re.RowsHeader.FlagsPos] = fs[0]
 		ev.RawData[replication.EventHeaderSize+re.RowsHeader.FlagsPos+1] = fs[1]
+
+		rh = re.RowsHeader
 	}
 
 	// one data one object
 	if checksumAlg == replication.BINLOG_CHECKSUM_ALG_CRC32 {
 		return &DataEvent{
-			Header:   ev.Header.Copy(), // here must copy for multi thread using shared header
-			Data:     ev.RawData[replication.EventHeaderSize : len(ev.RawData)-CRC32Size],
-			ExedGtid: exedGtid,
-			TrxGtid:  trxGtid,
-			BinFile:  binFile,
-			IsDDL:    ddl,
+			Header:     ev.Header.Copy(), // here must copy for multi thread using shared header
+			RowsHeader: rh,
+			Data:       ev.RawData[replication.EventHeaderSize : len(ev.RawData)-CRC32Size],
+			ExedGtid:   exedGtid,
+			TrxGtid:    trxGtid,
+			BinFile:    binFile,
+			IsDDL:      ddl,
+			IsCommit:   isCommit,
 		}
 	}
 	return &DataEvent{
-		Header:   ev.Header.Copy(), // here must copy for multi thread using shared header
-		Data:     ev.RawData[replication.EventHeaderSize:],
-		ExedGtid: exedGtid,
-		TrxGtid:  trxGtid,
-		BinFile:  binFile,
-		IsDDL:    ddl,
+		Header:     ev.Header.Copy(), // here must copy for multi thread using shared header
+		RowsHeader: rh,
+		Data:       ev.RawData[replication.EventHeaderSize:],
+		ExedGtid:   exedGtid,
+		TrxGtid:    trxGtid,
+		BinFile:    binFile,
+		IsDDL:      ddl,
+		IsCommit:   isCommit,
 	}
 }
 

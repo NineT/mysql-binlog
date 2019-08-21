@@ -36,7 +36,6 @@ type MergeConfig struct {
 	binFile       string                               // binlog file
 	lastEventTime uint32                               // last event time:
 	lastFlags     uint16                               // last flag
-	table         string                               // 注意table是传值 不是引用 临时变量 存储事件对应的表名
 	formatDesc    *replication.BinlogEvent             // format description event
 	checksumAlg   byte                                 // checksumAlg
 	latestBegin   *blog.DataEvent                      // begin for latest
@@ -228,7 +227,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 
 		switch strings.ToUpper(string(qe.Query)) {
 		case "BEGIN":
-			mc.latestBegin = blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
+			mc.latestBegin = blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false, false)
 		case "COMMIT":
 			mc.handleCommit(ev)
 		case "ROLLBACK":
@@ -244,9 +243,9 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 				// just write empty table name
 				mc.relatedTables[""] = true
 
-				mc.tableHandlers[mc.table].EventChan <- mc.latestGtid.Copy()
+				mc.tableHandlers[""].EventChan <- mc.latestGtid.Copy()
 
-				mc.tableHandlers[mc.table].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
+				mc.tableHandlers[""].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true, false)
 			case "separated":
 				// filter trigger on every event
 				flag, err := conf.IsFilteredSQL(qe.Query)
@@ -280,7 +279,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 						h.EventChan <- mc.latestGtid.Copy()
 
 						// ddl event
-						h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
+						h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true, false)
 					}
 					c = len(mc.tableHandlers)
 				}
@@ -326,38 +325,40 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 	case replication.EXECUTE_LOAD_QUERY_EVENT:
 	case replication.TABLE_MAP_EVENT:
 		tme, _ := ev.Event.(*replication.TableMapEvent)
+
+		var table string
 		switch mc.mode {
 		case "integrated":
-			mc.table = "" // always to empty
+			table = "" // always to empty
 		case "separated":
-			mc.table = fmt.Sprintf("%s.%s", inter.CharStd(string(tme.Schema)),
+			table = fmt.Sprintf("%s.%s", inter.CharStd(string(tme.Schema)),
 				inter.CharStd(string(tme.Table)))
 		}
 
 		// remember related tables
-		if _, ok := mc.relatedTables[mc.table]; !ok {
-			mc.relatedTables[mc.table] = true
+		if _, ok := mc.relatedTables[table]; !ok {
+			mc.relatedTables[table] = true
 		}
 
-		if _, ok := mc.tableHandlers[mc.table]; !ok {
-			mc.newHandler(curr, mc.table, mc.gc)
+		if _, ok := mc.tableHandlers[table]; !ok {
+			mc.newHandler(curr, table, mc.gc)
 		}
 
-		h := mc.tableHandlers[mc.table]
+		h := mc.tableHandlers[table]
 
 		// one table => one binlog file => one gtid event & begin event in 1 trx
-		if mc.relatedTables[mc.table] {
+		if mc.relatedTables[table] {
 			// gtid
 			h.EventChan <- mc.latestGtid.Copy()
 
 			// begin
 			h.EventChan <- mc.latestBegin.Copy()
 
-			mc.relatedTables[mc.table] = false
+			mc.relatedTables[table] = false
 		}
 
 		// table map event
-		h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
+		h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false, false)
 
 	case replication.WRITE_ROWS_EVENTv0,
 		replication.WRITE_ROWS_EVENTv1,
@@ -369,7 +370,17 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 		replication.UPDATE_ROWS_EVENTv1,
 		replication.UPDATE_ROWS_EVENTv2:
 		// write event into even channel
-		mc.tableHandlers[mc.table].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
+		re := ev.Event.(*replication.RowsEvent)
+		var table string
+		switch mc.mode {
+		case "integrated":
+			table = "" // always to empty
+		case "separated":
+			table = fmt.Sprintf("%s.%s", inter.CharStd(string(re.Table.Schema)),
+				inter.CharStd(string(re.Table.Table)))
+		}
+
+		mc.tableHandlers[table].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false, false)
 
 	case replication.INCIDENT_EVENT:
 	case replication.HEARTBEAT_EVENT:
@@ -395,7 +406,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 		}
 
 		// save the latest gtid event
-		mc.latestGtid = blog.Binlog2Data(ev, mc.checksumAlg, []byte(sg), []byte(mc.gtid.String()), mc.binFile, false)
+		mc.latestGtid = blog.Binlog2Data(ev, mc.checksumAlg, []byte(sg), []byte(mc.gtid.String()), mc.binFile, false, false)
 
 	case replication.ANONYMOUS_GTID_EVENT:
 	case replication.PREVIOUS_GTIDS_EVENT:
@@ -407,7 +418,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 func (mc *MergeConfig) newHandler(curr uint32, table string, gch chan []byte) {
 	log.Info("table binlog file path with current ", fmt.Sprintf("%s/%s/%d.log", mc.path, table, curr))
 
-	evh, err := binlog.NewEventHandler(mc.path, table, curr, mc.cid, blog.Binlog2Data(mc.formatDesc, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false), mc.After, gch)
+	evh, err := binlog.NewEventHandler(mc.path, table, curr, mc.cid, blog.Binlog2Data(mc.formatDesc, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false, false), mc.After, gch)
 	if err != nil {
 		debug.PrintStack()
 		panic(err)
@@ -444,7 +455,7 @@ func (mc *MergeConfig) writeQueryEvent(table []byte, ev *replication.BinlogEvent
 
 	log.Debugf("write ddl")
 	// ddl event
-	h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true)
+	h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true, false)
 
 	log.Debugf("finish writeQueryEvent")
 }
@@ -463,7 +474,7 @@ func (mc *MergeConfig) Status() error {
 func (mc *MergeConfig) handleCommit(ev *replication.BinlogEvent) {
 	for t := range mc.relatedTables {
 		// write xid commit event to each table
-		mc.tableHandlers[t].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false)
+		mc.tableHandlers[t].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false, true)
 	}
 
 	mc.offsets.PushBack(&meta.Offset{

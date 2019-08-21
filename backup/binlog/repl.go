@@ -1,6 +1,7 @@
 package binlog
 
 import (
+	"encoding/binary"
 	"fmt"
 	"runtime/debug"
 
@@ -15,17 +16,18 @@ import (
 
 // TableEventHandler 表的事件处理器
 type TableEventHandler struct {
-	Table     string               // Table name
-	Size      int64                // current binlog size
-	After     *final.After         // after math
-	Stamp     int64                // timestamp for binlog file name eg. 1020040204.log
-	EventChan chan *blog.DataEvent // transaction channel 事件队列
-	GtidChan  chan []byte          // gtid chan using
-	cid       int64                // cluster id
-	offset    *meta.Offset         // offset for local binlog file
-	binWriter *blog.BinlogWriter   // binlog writer
-	idxWriter *blog.IndexWriter    // index writer
-	flWriter  *blog.LogList        // file list writer
+	Table        string               // Table name
+	Size         int64                // current binlog size
+	After        *final.After         // after math
+	Stamp        int64                // timestamp for binlog file name eg. 1020040204.log
+	EventChan    chan *blog.DataEvent // transaction channel 事件队列
+	lastRowEvent *blog.DataEvent      // save the last row event
+	GtidChan     chan []byte          // gtid chan using
+	cid          int64                // cluster id
+	offset       *meta.Offset         // offset for local binlog file
+	binWriter    *blog.BinlogWriter   // binlog writer
+	idxWriter    *blog.IndexWriter    // index writer
+	flWriter     *blog.LogList        // file list writer
 }
 
 // NewEventHandler new event handler for binlog writer
@@ -202,94 +204,38 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 
 	switch t.Header.EventType {
 	case replication.XID_EVENT:
+		return h.commit(t, pos)
 
-		// write gtid
-		if err := h.binWriter.WriteEvent(t); err != nil {
-			log.Errorf("xid event write to binlog file{%s} error{%v}", h.binWriter.FullName, err)
-			return err
-		}
-
-		// gtid event then should remember the latest offset
-		h.offset = h.binWriter.LastPos(h.cid, t.ExedGtid, t.TrxGtid, t.Header.Timestamp)
-
-		// write offset to binlog index file
-		if err := h.idxWriter.Write(&blog.IndexOffset{
-			DumpFile: string(t.BinFile),
-			DumpPos:  pos,
-			Local:    h.offset,
-		}); err != nil {
-			log.Errorf("write xid index offset {%v} error %v", h.offset, err)
-			return err
-		}
-
-		// new file
-		nf, err := h.binWriter.CheckFlush(t.Header.Timestamp)
-		if err != nil {
-			log.Errorf("check binlog{%s} flush error %v", h.binWriter.FullName, err)
-			return err
-		}
-
-		if nf {
-			// flush index file
-			iw, err := h.idxWriter.FlushIndex(t.Header.Timestamp)
-			if err != nil {
-				log.Errorf("flush index writer {%s} error %v", h.binWriter.Dir, err)
-				return err
-			}
-			h.idxWriter = iw
-
-			if err := h.flWriter.Write([]byte(h.binWriter.Name)); err != nil {
-				log.Errorf("write file name{%s} to file list{%s} error{%v}", h.binWriter.FullName, h.flWriter.FullName, err)
-				return err
-			}
-		}
-
-		// return gtid
-		h.GtidChan <- t.TrxGtid
 	case replication.QUERY_EVENT:
 		if t.IsDDL { // only ddl then take it as commit event to check whether it is the right to flush logs
-			// write gtid
-			if err := h.binWriter.WriteEvent(t); err != nil {
-				log.Errorf("write query event into binlog file{%s} error %v", h.binWriter.FullName, err)
-				return err
-			}
-
-			// gtid event then should remember the latest offset
-			h.offset = h.binWriter.LastPos(h.cid, t.ExedGtid, t.TrxGtid, t.Header.Timestamp)
-
-			// write offset to binlog index file
-			if err := h.idxWriter.Write(&blog.IndexOffset{
-				DumpFile: string(t.BinFile),
-				DumpPos:  pos,
-				Local:    h.offset,
-			}); err != nil {
-				log.Errorf("write query event index{%s} error{%v}", h.binWriter.FullName, err)
-				return err
-			}
-
-			// new file
-			nf, err := h.binWriter.CheckFlush(t.Header.Timestamp)
-			if err != nil {
-				log.Errorf("check binlog file{%s} flush error{%v}", h.binWriter.FullName, err)
-				return err
-			}
-
-			if nf {
-				// flush index file
-				iw, err := h.idxWriter.FlushIndex(t.Header.Timestamp)
-				if err != nil {
-					log.Errorf("flush index writer{%s} error %v", h.idxWriter.FullName, err)
-					return err
-				}
-				h.idxWriter = iw
-			}
-
-			// return gtid
-			h.GtidChan <- t.TrxGtid
+			return h.commit(t, pos)
+		} else if t.IsCommit {
+			return h.commit(t, pos)
 		} else {
 			// write query event as well
 			if err := h.binWriter.WriteEvent(t); err != nil {
 				log.Errorf("write query event{%s} but not ddl on writer{%s} error{%v}", string(t.Data), h.binWriter.FullName, err)
+				return err
+			}
+		}
+	case replication.WRITE_ROWS_EVENTv0,
+		replication.WRITE_ROWS_EVENTv1,
+		replication.WRITE_ROWS_EVENTv2,
+		replication.DELETE_ROWS_EVENTv0,
+		replication.DELETE_ROWS_EVENTv1,
+		replication.DELETE_ROWS_EVENTv2,
+		replication.UPDATE_ROWS_EVENTv0,
+		replication.UPDATE_ROWS_EVENTv1,
+		replication.UPDATE_ROWS_EVENTv2:
+		// save last row event wait for flush when commit arrived
+		pre := h.lastRowEvent
+
+		h.lastRowEvent = t
+
+		// write event
+		if pre != nil {
+			if err := h.binWriter.WriteEvent(t); err != nil {
+				log.Errorf("write event {%s} to dir{%s} error{%v}", h.binWriter.FullName, h.binWriter.Dir, err)
 				return err
 			}
 		}
@@ -301,6 +247,77 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 		}
 	}
 
+	return nil
+}
+
+// commit event to binlog
+func (h *TableEventHandler) commit(t *blog.DataEvent, pos uint32) error {
+	// write last row event and fix event stmt_flag
+	if h.lastRowEvent != nil {
+		// old flags
+		of := binary.LittleEndian.Uint16(h.lastRowEvent.Data[h.lastRowEvent.RowsHeader.FlagsPos:])
+
+		of |= blog.StmtEndFlag
+
+		fs := make([]byte, 2)
+		binary.LittleEndian.PutUint16(fs, of)
+
+		h.lastRowEvent.Data[h.lastRowEvent.RowsHeader.FlagsPos] = fs[0]
+		h.lastRowEvent.Data[h.lastRowEvent.RowsHeader.FlagsPos+1] = fs[1]
+
+		// write gtid
+		if err := h.binWriter.WriteEvent(h.lastRowEvent); err != nil {
+			log.Errorf("xid event write to binlog file{%s} error{%v}", h.binWriter.FullName, err)
+			return err
+		}
+	}
+
+	// reset last row event
+	h.lastRowEvent = nil
+
+	// write gtid
+	if err := h.binWriter.WriteEvent(t); err != nil {
+		log.Errorf("xid event write to binlog file{%s} error{%v}", h.binWriter.FullName, err)
+		return err
+	}
+
+	// gtid event then should remember the latest offset
+	h.offset = h.binWriter.LastPos(h.cid, t.ExedGtid, t.TrxGtid, t.Header.Timestamp)
+
+	// write offset to binlog index file
+	if err := h.idxWriter.Write(&blog.IndexOffset{
+		DumpFile: string(t.BinFile),
+		DumpPos:  pos,
+		Local:    h.offset,
+	}); err != nil {
+		log.Errorf("write xid index offset {%v} error %v", h.offset, err)
+		return err
+	}
+
+	// new file
+	nf, err := h.binWriter.CheckFlush(t.Header.Timestamp)
+	if err != nil {
+		log.Errorf("check binlog{%s} flush error %v", h.binWriter.FullName, err)
+		return err
+	}
+
+	if nf {
+		// flush index file
+		iw, err := h.idxWriter.FlushIndex(t.Header.Timestamp)
+		if err != nil {
+			log.Errorf("flush index writer {%s} error %v", h.binWriter.Dir, err)
+			return err
+		}
+		h.idxWriter = iw
+
+		if err := h.flWriter.Write([]byte(h.binWriter.Name)); err != nil {
+			log.Errorf("write file name{%s} to file list{%s} error{%v}", h.binWriter.FullName, h.flWriter.FullName, err)
+			return err
+		}
+	}
+
+	// return gtid
+	h.GtidChan <- t.TrxGtid
 	return nil
 }
 
