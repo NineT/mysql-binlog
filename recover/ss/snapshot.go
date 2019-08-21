@@ -115,7 +115,8 @@ func (s *Snapshot) latestSnapshot() (string, int64, error) {
 func (s *Snapshot) CopyData() error {
 	log.Debugf("copy data from source {%s} to dst{%s} ", s.src, "/export/")
 
-	c := fmt.Sprintf("cp -R %s/* %s", s.src, "/export/")
+	// remove index file
+	c := fmt.Sprintf("rsync -chavzP --exclude=*.index %s/* %s", s.src, "/export/")
 	log.Debugf("execute shell command %s", c)
 
 	if _, _, err := utils.ExeShell(c); err != nil {
@@ -128,7 +129,7 @@ func (s *Snapshot) CopyData() error {
 func (s *Snapshot) CopyBin() error {
 	// newly path for current timestamp
 	// copy my.cnf to the right path
-	cp := fmt.Sprintf("cp -R %s/servers /export/", s.base)
+	cp := fmt.Sprintf("rsync -chavzP %s/servers /export/", s.base)
 	log.Infof("execute shell command %s", cp)
 	if _, _, err := utils.ExeShell(cp); err != nil {
 		return err
@@ -237,7 +238,7 @@ func (s *Snapshot) Offset() (*meta.Offset, error) {
 func (s *Snapshot) Copy2Cfs() error {
 	sp := fmt.Sprintf("%s/%s%d", s.base, snapshotPrefix, s.timestamp)
 
-	c := fmt.Sprintf("mkdir -p %s && cp -R /export/data %s", sp, sp)
+	c := fmt.Sprintf("mkdir -p %s && rsync -chavzP /export/data %s", sp, sp)
 	o, e, err := utils.ExeShell(c)
 	if err != nil {
 		return err
