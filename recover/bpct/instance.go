@@ -60,9 +60,19 @@ func (i *Instance) Check() error {
 
 // Flush data
 func (i *Instance) Flush() error {
-	if _, err := i.db.Exec("reset master"); err != nil {
-		log.Errorf("execute sql{reset master} error{%v}", err)
-		return err
+	// open gtid
+	sqls := []string{
+		"SET @@GLOBAL.GTID_MODE = OFF_PERMISSIVE",
+		"SET @@GLOBAL.GTID_MODE = ON_PERMISSIVE",
+		"SET @@GLOBAL.GTID_MODE = ON",
+		"RESET MASTER",
+	}
+
+	for _, s := range sqls {
+		if _, err := i.db.Exec(s); err != nil {
+			log.Errorf("execute query{%s} error{%v}", s, err)
+			return err
+		}
 	}
 	return nil
 }
@@ -70,8 +80,9 @@ func (i *Instance) Flush() error {
 // InitConn for set
 func (i *Instance) InitConn() error {
 	sqls := []string{
-		"set @@GLOBAL.GTID_MODE = ON_PERMISSIVE",
-		"set @@GLOBAL.GTID_MODE = OFF_PERMISSIVE",
+		"SET @@GLOBAL.GTID_MODE = ON_PERMISSIVE",
+		"SET @@GLOBAL.GTID_MODE = OFF_PERMISSIVE",
+		"SET @@GLOBAL.GTID_MODE = OFF",
 		"SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
 		"SET @@session.foreign_key_checks=0, @@session.sql_auto_is_null=0, @@session.unique_checks=0, @@session.autocommit=0",
 	}
