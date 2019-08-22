@@ -20,7 +20,6 @@ import (
 	"github.com/mysql-binlog/common/regx"
 
 	"github.com/mysql-binlog/backup/binlog"
-	"github.com/mysql-binlog/backup/conf"
 )
 
 // MergeConfig merge conf
@@ -138,7 +137,7 @@ func (mc *MergeConfig) Start() {
 				o := e.Value.(*meta.Offset)
 				if strings.EqualFold(o.TrxGtid, string(g)) {
 					o.Counter --
-					if o.Counter == 0 {
+					if o.Counter <= 0 {
 						// gtid event flush to binlog file
 						tmp = e
 					}
@@ -247,18 +246,6 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 
 				mc.tableHandlers[""].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true, false)
 			case inter.Separated:
-				// filter trigger on every event
-				flag, err := conf.IsFilteredSQL(qe.Query)
-				if err != nil {
-					log.Warnf("ddl %s filtered check error{%v}", qe.Query, err)
-					panic(err)
-				}
-
-				if flag {
-					log.Warnf("ddl %s is filtered", qe.Query)
-					return
-				}
-
 				// single log for each table
 				if tbs, matched := regx.Parse(qe.Query, qe.Schema); matched { // 匹配表名成功
 					for _, tb := range tbs {
@@ -462,6 +449,12 @@ func (mc *MergeConfig) writeQueryEvent(table []byte, ev *replication.BinlogEvent
 
 // NewlyOffset for binlog dump position
 func (mc *MergeConfig) NewlyOffset() *meta.Offset {
+	idx := 0
+	for e := mc.offsets.Front(); e != nil; e = e.Next() {
+		idx ++
+		o := e.Value.(*meta.Offset)
+		log.Infof("current index {%d} , offset {%v}", idx, o)
+	}
 	return mc.offsets.Front().Value.(*meta.Offset)
 }
 

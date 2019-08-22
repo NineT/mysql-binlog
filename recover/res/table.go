@@ -226,17 +226,6 @@ func (t *TableRecover) Recover() {
 				case "ROLLBACK":
 				case "SAVEPOINT":
 				default:
-					isf, err := conf.IsFilteredSQL(qe.Query)
-					if err != nil {
-						log.Warnf("ddl %s filtered check error{%v}", qe.Query, err)
-						panic(err)
-					}
-
-					if isf { // is filtered sql
-						log.Warnf("ddl {%s} is filtered no need to execute", qe.Query)
-						return nil
-					}
-
 					isC, err := t.coordinate(qe)
 					if err != nil {
 						panic(err)

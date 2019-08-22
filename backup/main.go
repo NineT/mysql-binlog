@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime/pprof"
 
 	"github.com/zssky/log"
 
@@ -49,20 +48,20 @@ func main() {
 
 	logger()
 
-	f, _ := os.Create("/tmp/cpu.prof")
-	if err := pprof.StartCPUProfile(f); err != nil {
-		log.Fatal(err)
-	}
+	//f, _ := os.Create("/tmp/cpu.prof")
+	//if err := pprof.StartCPUProfile(f); err != nil {
+	//	log.Fatal(err)
+	//}
 
 	c := make(chan os.Signal)
 	go func() {
 		signal.Notify(c)
 		s := <-c
-		pprof.StopCPUProfile()
+		//pprof.StopCPUProfile()
 
-		if err := f.Close(); err != nil {
-			log.Fatal(err)
-		}
+		//if err := f.Close(); err != nil {
+		//	log.Fatal(err)
+		//}
 
 		fmt.Println("退出信号", s)
 		os.Exit(0)
