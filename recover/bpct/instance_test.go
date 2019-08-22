@@ -111,3 +111,13 @@ func TestInstance_Execute(t *testing.T) {
 
 	time.Sleep(1000000 * time.Hour)
 }
+
+func TestInstance_GtidMode(t *testing.T) {
+	i, err := NewInstance("root", "secret", 3306)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer i.Close()
+
+	log.Infof("gtid mode %v", i.GtidMode())
+}

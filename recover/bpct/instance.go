@@ -8,9 +8,20 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+
 	// mysql
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/zssky/log"
+)
+
+type GtidMode string
+
+const (
+	gtidModeOFF           GtidMode = "OFF"
+	gtidModeOffPermissive GtidMode = "OFF_PERMISSIVE"
+	gtidModeOnPermissive  GtidMode = "ON_PERMISSIVE"
+	gtidModeON            GtidMode = "ON"
 )
 
 // Instance MySQL server
@@ -79,13 +90,36 @@ func (i *Instance) Flush() error {
 
 // InitConn for set
 func (i *Instance) InitConn() error {
-	sqls := []string{
-		"SET @@GLOBAL.GTID_MODE = ON_PERMISSIVE",
-		"SET @@GLOBAL.GTID_MODE = OFF_PERMISSIVE",
-		"SET @@GLOBAL.GTID_MODE = OFF",
-		"SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
-		"SET @@session.foreign_key_checks=0, @@session.sql_auto_is_null=0, @@session.unique_checks=0, @@session.autocommit=0",
+	var sqls []string
+	switch i.GtidMode() {
+	case gtidModeOFF:
+		sqls = []string{
+			"SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
+			"SET @@session.foreign_key_checks=0, @@session.sql_auto_is_null=0, @@session.unique_checks=0, @@session.autocommit=0",
+		}
+	case gtidModeOffPermissive:
+		sqls = []string{
+			"SET @@GLOBAL.GTID_MODE = OFF",
+			"SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
+			"SET @@session.foreign_key_checks=0, @@session.sql_auto_is_null=0, @@session.unique_checks=0, @@session.autocommit=0",
+		}
+	case gtidModeOnPermissive:
+		sqls = []string{
+			"SET @@GLOBAL.GTID_MODE = OFF_PERMISSIVE",
+			"SET @@GLOBAL.GTID_MODE = OFF",
+			"SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
+			"SET @@session.foreign_key_checks=0, @@session.sql_auto_is_null=0, @@session.unique_checks=0, @@session.autocommit=0",
+		}
+	case gtidModeON:
+		sqls = []string{
+			"SET @@GLOBAL.GTID_MODE = ON_PERMISSIVE",
+			"SET @@GLOBAL.GTID_MODE = OFF_PERMISSIVE",
+			"SET @@GLOBAL.GTID_MODE = OFF",
+			"SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
+			"SET @@session.foreign_key_checks=0, @@session.sql_auto_is_null=0, @@session.unique_checks=0, @@session.autocommit=0",
+		}
 	}
+
 	for _, s := range sqls {
 		if _, err := i.db.Exec(s); err != nil {
 			log.Errorf("execute query{%s} error{%v}", s, err)
@@ -140,4 +174,28 @@ func (i *Instance) Commit() error {
 	log.Debug("commit")
 	i.rst --
 	return i.tx.Commit()
+}
+
+// GtidMode
+func (i *Instance) GtidMode() GtidMode {
+	sql := "SELECT @@GLOBAL.GTID_MODE"
+	rs, err := i.db.Query(sql)
+	if err != nil {
+		log.Errorf("query sql {%s} error {%v}", sql, err)
+		return gtidModeOFF
+	}
+	defer rs.Close()
+
+	for rs.Next() {
+		var m string
+		if err := rs.Scan(&m); err != nil {
+			log.Errorf("scan rows error{%v}", err)
+			return gtidModeOFF
+		}
+
+		m = strings.ToUpper(m)
+		return GtidMode(m)
+	}
+
+	return gtidModeOFF
 }
