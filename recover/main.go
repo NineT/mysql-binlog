@@ -165,6 +165,13 @@ func main() {
 		}
 	}()
 
+	log.Infof("flush data on MySQL")
+	// flush tables with read lock; flush logs;
+	if err := oi.Flush(); err != nil {
+		log.Errorf("flush MySQL data for cluster id{%d} error {%v}", *clusterID, err)
+		os.Exit(1)
+	}
+
 	// if just recover then here to return
 	switch *rt {
 	case "recover":
@@ -174,13 +181,6 @@ func main() {
 		}
 	default:
 		// keep going
-	}
-
-	log.Infof("flush data on MySQL")
-	// flush tables with read lock; flush logs;
-	if err := oi.Flush(); err != nil {
-		log.Errorf("flush MySQL data for cluster id{%d} error {%v}", *clusterID, err)
-		os.Exit(1)
 	}
 
 	log.Infof("to stop MySQL server")

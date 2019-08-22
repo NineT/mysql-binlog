@@ -139,7 +139,7 @@ func (s *Snapshot) CopyBin() error {
 
 // Auth grant all auth to file to mysql:mysql
 func (s *Snapshot) Auth() error {
-	c := "chown -R mysql:mysql /export/"
+	c := fmt.Sprintf("chown -R mysql:mysql /export/ && chmod 644 %s/my.cnf", "/export/servers/mysql/etc/")
 	o, e, err := utils.ExeShell(c)
 	if err != nil {
 		return err
@@ -199,12 +199,12 @@ func (s *Snapshot) startMySQLd() error {
 	return fmt.Errorf("MySQL start timeout %d seconds", 20)
 }
 
-// StopMySQL for copy data to cfs
+// StopMySQL for copy data to cfs stop mysql always success
 func (s *Snapshot) StopMySQL(user, pass string) error {
 	c := fmt.Sprintf("%s/mysql.server stop", mysqlServerPath)
 	o, e, err := utils.ExeShell(c)
 	if err != nil {
-		return err
+		log.Error(err)
 	}
 	log.Infof("out %s, err %s", o, e)
 	return nil

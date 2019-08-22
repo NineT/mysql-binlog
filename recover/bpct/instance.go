@@ -72,11 +72,33 @@ func (i *Instance) Check() error {
 // Flush data
 func (i *Instance) Flush() error {
 	// open gtid
-	sqls := []string{
-		"SET @@GLOBAL.GTID_MODE = OFF_PERMISSIVE",
-		"SET @@GLOBAL.GTID_MODE = ON_PERMISSIVE",
-		"SET @@GLOBAL.GTID_MODE = ON",
-		"RESET MASTER",
+	var sqls []string
+	switch i.GtidMode() {
+	case gtidModeOFF:
+		sqls = []string{
+			"SET @@GLOBAL.GTID_MODE = OFF_PERMISSIVE",
+			"SET @@GLOBAL.GTID_MODE = ON_PERMISSIVE",
+			"SET @@GLOBAL.ENFORCE_GTID_CONSISTENCY = ON",
+			"SET @@GLOBAL.GTID_MODE = ON",
+			"RESET MASTER",
+		}
+	case gtidModeOffPermissive:
+		sqls = []string{
+			"SET @@GLOBAL.GTID_MODE = ON_PERMISSIVE",
+			"SET @@GLOBAL.ENFORCE_GTID_CONSISTENCY = ON",
+			"SET @@GLOBAL.GTID_MODE = ON",
+			"RESET MASTER",
+		}
+	case gtidModeOnPermissive:
+		sqls = []string{
+			"SET @@GLOBAL.ENFORCE_GTID_CONSISTENCY = ON",
+			"SET @@GLOBAL.GTID_MODE = ON",
+			"RESET MASTER",
+		}
+	case gtidModeON:
+		sqls = []string{
+			"RESET MASTER",
+		}
 	}
 
 	for _, s := range sqls {
@@ -99,14 +121,12 @@ func (i *Instance) InitConn() error {
 		}
 	case gtidModeOffPermissive:
 		sqls = []string{
-			"SET @@GLOBAL.GTID_MODE = OFF",
 			"SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
 			"SET @@session.foreign_key_checks=0, @@session.sql_auto_is_null=0, @@session.unique_checks=0, @@session.autocommit=0",
 		}
 	case gtidModeOnPermissive:
 		sqls = []string{
 			"SET @@GLOBAL.GTID_MODE = OFF_PERMISSIVE",
-			"SET @@GLOBAL.GTID_MODE = OFF",
 			"SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
 			"SET @@session.foreign_key_checks=0, @@session.sql_auto_is_null=0, @@session.unique_checks=0, @@session.autocommit=0",
 		}
@@ -114,7 +134,6 @@ func (i *Instance) InitConn() error {
 		sqls = []string{
 			"SET @@GLOBAL.GTID_MODE = ON_PERMISSIVE",
 			"SET @@GLOBAL.GTID_MODE = OFF_PERMISSIVE",
-			"SET @@GLOBAL.GTID_MODE = OFF",
 			"SET TRANSACTION ISOLATION LEVEL READ COMMITTED",
 			"SET @@session.foreign_key_checks=0, @@session.sql_auto_is_null=0, @@session.unique_checks=0, @@session.autocommit=0",
 		}
