@@ -188,7 +188,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 				// return gtid
 				h.GtidChan <- t.TrxGtid
 			case replication.QUERY_EVENT:
-				if t.IsDDL {
+				if t.IsDDL || t.IsCommit {
 					// return gtid
 					h.GtidChan <- t.TrxGtid
 				}
@@ -234,7 +234,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 
 		// write event
 		if pre != nil {
-			if err := h.binWriter.WriteEvent(t); err != nil {
+			if err := h.binWriter.WriteEvent(pre); err != nil {
 				log.Errorf("write event {%s} to dir{%s} error{%v}", h.binWriter.FullName, h.binWriter.Dir, err)
 				return err
 			}
