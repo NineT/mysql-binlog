@@ -31,8 +31,6 @@ const (
 
 	mysqlServerPath = "/export/servers/mysql/support-files"
 
-	mysqldPath = "/export/servers/mysql/"
-
 	offsetSuffix = ".index"
 )
 
@@ -116,7 +114,7 @@ func (s *Snapshot) CopyData() error {
 	log.Debugf("copy data from source {%s} to dst{%s} ", s.src, "/export/")
 
 	// remove index file
-	c := fmt.Sprintf("rsync -chavzP --exclude=*.index %s/* %s", s.src, "/export/")
+	c := fmt.Sprintf("rsync -chaz --exclude=*.index %s/* %s", s.src, "/export/")
 	log.Debugf("execute shell command %s", c)
 
 	if _, _, err := utils.ExeShell(c); err != nil {
@@ -129,7 +127,7 @@ func (s *Snapshot) CopyData() error {
 func (s *Snapshot) CopyBin() error {
 	// newly path for current timestamp
 	// copy my.cnf to the right path
-	cp := fmt.Sprintf("rsync -chavzP %s/servers /export/", s.base)
+	cp := fmt.Sprintf("rsync -chaz %s/servers /export/", s.base)
 	log.Infof("execute shell command %s", cp)
 	if _, _, err := utils.ExeShell(cp); err != nil {
 		return err
@@ -174,12 +172,10 @@ func (s *Snapshot) StartMySQL() error {
 // startMySQLd
 func (s *Snapshot) startMySQLd() error {
 	// todo using mysqld_save must be no error out have wait the daemon process
-	m := fmt.Sprintf("nohup %s/bin/mysqld --defaults-file=%s/etc/my.cnf --user=mysql & ", mysqldPath, mysqldPath)
-	o, e, err := utils.ExeShell(m)
-	if err != nil {
+	m := fmt.Sprintf("%s/mysql.server start", mysqlServerPath)
+	if err := utils.ExecuteShellNoWait(m); err != nil {
 		return err
 	}
-	log.Infof("out %s, err %s", o, e)
 
 	timeout := 10
 	for i := 0; i < timeout; i ++ {
@@ -238,7 +234,7 @@ func (s *Snapshot) Offset() (*meta.Offset, error) {
 func (s *Snapshot) Copy2Cfs() error {
 	sp := fmt.Sprintf("%s/%s%d", s.base, snapshotPrefix, s.timestamp)
 
-	c := fmt.Sprintf("mkdir -p %s && rsync -chavzP /export/data %s", sp, sp)
+	c := fmt.Sprintf("mkdir -p %s && rsync -chaz /export/data %s", sp, sp)
 	o, e, err := utils.ExeShell(c)
 	if err != nil {
 		return err

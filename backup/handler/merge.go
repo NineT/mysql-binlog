@@ -239,14 +239,14 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 			// offset counter
 			var c int
 			switch mc.mode {
-			case "integrated":
+			case inter.Integrated:
 				// just write empty table name
 				mc.relatedTables[""] = true
 
 				mc.tableHandlers[""].EventChan <- mc.latestGtid.Copy()
 
 				mc.tableHandlers[""].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, true, false)
-			case "separated":
+			case inter.Separated:
 				// filter trigger on every event
 				flag, err := conf.IsFilteredSQL(qe.Query)
 				if err != nil {
@@ -328,9 +328,9 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 
 		var table string
 		switch mc.mode {
-		case "integrated":
+		case inter.Integrated:
 			table = "" // always to empty
-		case "separated":
+		case inter.Separated:
 			table = fmt.Sprintf("%s.%s", inter.CharStd(string(tme.Schema)),
 				inter.CharStd(string(tme.Table)))
 		}
@@ -373,9 +373,9 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 		re := ev.Event.(*replication.RowsEvent)
 		var table string
 		switch mc.mode {
-		case "integrated":
+		case inter.Integrated:
 			table = "" // always to empty
-		case "separated":
+		case inter.Separated:
 			table = fmt.Sprintf("%s.%s", inter.CharStd(string(re.Table.Schema)),
 				inter.CharStd(string(re.Table.Table)))
 		}

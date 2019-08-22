@@ -64,7 +64,7 @@ func main() {
 	// init logger
 	logger()
 
-	log.Infof("path path{%s}, cluster id {%d}, db {%s}, table{%s}, user{%s}, time{%s}, log level{%s}", *path, *clusterID, *db, *tb, *user, *time, *level)
+	log.Infof("path path{%s}, cluster id {%d}, db {%s}, table{%s}, user{%s}, time{%s}, log level{%s}, mode {%s}", *path, *clusterID, *db, *tb, *user, *time, *level, *mode)
 	t := inter.ParseTime(*time)
 
 	c := ss.NewCluster(*path, *mode, *clusterID)
@@ -150,7 +150,7 @@ func main() {
 	errs := make(chan error, 64)
 	defer close(errs)
 
-	rs, err := res.Recovering(res.RecoverMode(*mode), rtbs, ttbs, c.GetClusterPath(), t, ctx, o, *user, *passwd, 3358, errs)
+	rs, err := res.Recovering(*mode, rtbs, ttbs, c.GetClusterPath(), t, ctx, o, *user, *passwd, 3358, errs)
 	if err != nil {
 		os.Exit(1)
 	}

@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os/exec"
@@ -61,4 +62,13 @@ func ExeShell(c string) (string, string, error) {
 	}
 
 	return string(orst), string(erst), fmt.Errorf("execute command{%s} error{%s}", c, string(erst))
+}
+
+// ExecuteShellNoWait
+func ExecuteShellNoWait(c string) error  {
+	cmd := exec.Command("/bin/bash", "-c", c)
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	return cmd.Run()
 }

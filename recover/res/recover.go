@@ -8,17 +8,9 @@ import (
 
 	"github.com/zssky/log"
 
+	"github.com/mysql-binlog/common/inter"
+
 	"github.com/mysql-binlog/common/meta"
-)
-
-// RecoverMode
-type RecoverMode string
-
-const (
-	separated RecoverMode = "separated"
-
-	// integer means all binlog file into one whole style
-	integer RecoverMode = "integrated"
 )
 
 // Recover for tables or integer
@@ -29,9 +21,9 @@ type Recover interface {
 }
 
 // Recovering
-func Recovering(mode RecoverMode, rtbs, ttbs []string, clusterPath string, time int64, ctx context.Context, o *meta.Offset, user, pass string, port int, errs chan error) ([]Recover, error) {
+func Recovering(mode string, rtbs, ttbs []string, clusterPath string, time int64, ctx context.Context, o *meta.Offset, user, pass string, port int, errs chan error) ([]Recover, error) {
 	switch mode {
-	case separated:
+	case inter.Separated:
 		cwg := &sync.WaitGroup{}
 		co, err := NewCoordinator(user, pass, port, time, o, clusterPath, rtbs, ttbs, cwg, ctx, errs)
 		if err != nil {
@@ -69,7 +61,7 @@ func Recovering(mode RecoverMode, rtbs, ttbs []string, clusterPath string, time 
 		cwg.Wait()
 
 		return trs, nil
-	case integer:
+	case inter.Integrated:
 		wg := &sync.WaitGroup{}
 		wg.Add(1)
 
