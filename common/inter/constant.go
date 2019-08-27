@@ -113,6 +113,12 @@ const (
 	Integrated = "integrated"
 )
 
+type Int64s []int64
+
+func (s Int64s) Len() int           { return len(s) }
+func (s Int64s) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s Int64s) Less(i, j int) bool { return s[i] < s[j] }
+
 // AbsolutePath 绝对路径
 type AbsolutePath struct {
 	TmpSrc   string   // TmpSrc 临时source 根路径

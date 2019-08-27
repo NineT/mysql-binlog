@@ -102,6 +102,7 @@ func (i *Instance) Flush() error {
 	}
 
 	for _, s := range sqls {
+		log.Debug("execute sql ", s)
 		if _, err := i.db.Exec(s); err != nil {
 			log.Errorf("execute query{%s} error{%v}", s, err)
 			return err

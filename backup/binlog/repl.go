@@ -285,7 +285,7 @@ func (h *TableEventHandler) commit(t *blog.DataEvent, pos uint32) error {
 	h.offset = h.binWriter.LastPos(h.cid, t.ExedGtid, t.TrxGtid, t.Header.Timestamp)
 
 	// write offset to binlog index file
-	if err := h.idxWriter.Write(&blog.IndexOffset{
+	if err := h.idxWriter.Write(&meta.IndexOffset{
 		DumpFile: string(t.BinFile),
 		DumpPos:  pos,
 		Local:    h.offset,

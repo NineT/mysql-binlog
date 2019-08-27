@@ -74,6 +74,7 @@ func Recovering(mode string, rtbs, ttbs []string, clusterPath string, time int64
 
 		log.Infof("start table {%s} recover ", it.ID())
 		wg.Wait()
+		log.Infof("instance recover finish", it.ID())
 		return []Recover{it}, nil
 	}
 	panic(fmt.Errorf("recover mode %s no supported {integer, separated}", mode))

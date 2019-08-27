@@ -2,18 +2,30 @@ package meta
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/mysql-binlog/siddontang/go-mysql/mysql"
 	"github.com/zssky/log"
+
+	"github.com/mysql-binlog/common/inter"
 )
 
 // DbMeta including init offset and instance information
 type DbMeta struct {
 	Off  *Offset   `json:"offset"`   // offset
 	Inst *Instance `json:"instance"` // instance
+}
+
+// IndexOffset including origin MySQL binlog offset and generated binlog offset
+type IndexOffset struct {
+	DumpFile string       `json:"file"`  // dump binlog file name
+	DumpPos  uint32       `json:"pos"`   // dump binlog position
+	Local    *Offset `json:"local"` // generated local binlog offset
 }
 
 // Offset binlog offset write to meta
@@ -40,6 +52,10 @@ type Instance struct {
 const (
 	// offset set key in etcd
 	OffsetKey = "offset"
+
+	indexSuffix = ".index"
+
+	logSuffix = ".log"
 )
 
 // LessEqual whether the o{mean the current offset} is <= another offset
@@ -177,9 +193,114 @@ func (i *Instance) HasGTID() bool {
 		rst.Scan(&mode, &val)
 	}
 
-	if strings.EqualFold(val, "ON") {
-		return true
+	return strings.EqualFold(val, "ON")
+}
+
+// LatestOffset offset on cluster id
+func LatestOffset(path, m string, clusterID int64) (*IndexOffset, error) {
+	// max log file name
+	p := fmt.Sprintf("%s/%d", path, clusterID)
+	log.Debugf("log file path %s", p)
+
+	switch m {
+	case inter.Separated:
+		fs, err := ioutil.ReadDir(p)
+		if err != nil {
+			return nil, err
+		}
+
+		// max offset
+		var mo *IndexOffset
+		for _, f := range fs {
+			if strings.HasSuffix(f.Name(), indexSuffix) ||
+				strings.HasSuffix(f.Name(), logSuffix) {
+				continue
+			}
+
+			if len(strings.Split(f.Name(), ".")) != 2 {
+				continue
+			}
+
+			d := fmt.Sprintf("%s/%s", p, f.Name())
+			// take the max offset on dir
+			off, err := latestOffsetOnDir(d)
+			if err != nil {
+				log.Errorf("get latest offset on dir{%s} error {%v}", d, err)
+				return nil, err
+			}
+
+			if mo != nil {
+				if le, _ := LessEqual(mo.Local, off.Local); le {
+					mo = off
+				}
+			} else {
+				mo = off
+			}
+		}
+		log.Infof("newly offset %v ", mo)
+		return mo, nil
+	case inter.Integrated:
+		// log file exists
+		return latestOffsetOnDir(p)
 	}
 
-	return false
+	panic(fmt.Sprintf("mode error %s", m))
+}
+
+// latestOffsetOnDir
+func latestOffsetOnDir(p string) (*IndexOffset, error) {
+	fs, err := ioutil.ReadDir(p)
+	if err != nil {
+		return nil, err
+	}
+
+	var ts inter.Int64s
+	for _, f := range fs {
+		// absolute path
+		abf := fmt.Sprintf("%s/%s", p, f.Name())
+		log.Debugf("absolute file name %s", abf)
+
+		// log file
+		if strings.HasSuffix(f.Name(), string(inter.LogSuffix)) && inter.Exists(abf) {
+			log.Debugf("log file name %s", f.Name())
+
+			t, _ := strconv.ParseInt(strings.TrimSuffix(f.Name(), string(inter.LogSuffix)), 10, 64)
+			ts = append(ts, t)
+		}
+	}
+
+	sort.Sort(ts)
+
+	idf := ""
+
+	// index file exists
+	// take the last index file
+	for i := len(ts) - 1; i >= 0; i -- {
+		// index suffix
+		f := fmt.Sprintf("%s/%d%s", p, ts[i], ".index")
+		log.Debugf("check file {%s} exists", f)
+		if inter.Exists(f) {
+			idf = f
+			log.Infof("index file %s exist ", f)
+			break
+		}
+	}
+
+	log.Debugf("read index file %s last line", idf)
+
+	// last line as the offset
+	o, err := inter.LastLine(idf)
+	if err != nil {
+		log.Errorf("read last line of file %s error{%v}", idf, err)
+		return nil, err
+	}
+
+	off := &IndexOffset{}
+	if err := json.Unmarshal([]byte(o), off); err != nil {
+		log.Errorf("unmarshal data %v to meta offset error{%v}", o, err)
+		return nil, err
+	}
+
+	log.Infof("read latest offset {%v}", off)
+	return off, nil
 }

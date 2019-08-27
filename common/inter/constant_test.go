@@ -3,6 +3,7 @@ package inter
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/zssky/log"
@@ -23,9 +24,16 @@ func TestTail(t *testing.T) {
 	}
 
 	o := &meta.Offset{}
-	if err := json.Unmarshal(b, o); err != nil {
+	if err := json.Unmarshal([]byte(b), o); err != nil {
 		log.Fatal(err)
 	}
 
 	log.Infof("%v", o)
+}
+
+func TestInt64s_Len(t *testing.T) {
+	a := Int64s{10, 20, 30, 40, 50}
+	sort.Sort(a)
+
+	log.Infof("%v", a)
 }

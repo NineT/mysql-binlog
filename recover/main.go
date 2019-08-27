@@ -152,14 +152,16 @@ func main() {
 
 	rs, err := res.Recovering(*mode, rtbs, ttbs, c.GetClusterPath(), t, ctx, o, *user, *passwd, 3358, errs)
 	if err != nil {
+		log.Error(err)
 		os.Exit(1)
 	}
 
 	go func() {
 		for {
 			select {
-			case <-errs:
+			case e := <-errs:
 				cancel()
+				log.Error(e)
 				os.Exit(1)
 			}
 		}
@@ -180,6 +182,7 @@ func main() {
 			// block forever
 		}
 	default:
+		log.Debugf("keep continue for cluster id {%d}", *clusterID)
 		// keep going
 	}
 

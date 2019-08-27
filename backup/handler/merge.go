@@ -239,6 +239,11 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 			var c int
 			switch mc.mode {
 			case inter.Integrated:
+				var table = ""
+				if _, ok := mc.tableHandlers[table]; !ok {
+					mc.newHandler(curr, table, mc.gc)
+				}
+
 				// just write empty table name
 				mc.relatedTables[""] = true
 

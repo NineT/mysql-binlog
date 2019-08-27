@@ -3,6 +3,7 @@ package ss
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/mysql-binlog/common/meta"
 	"io/ioutil"
 	"regexp"
 	"strings"
@@ -10,7 +11,6 @@ import (
 	"github.com/zssky/log"
 
 	"github.com/mysql-binlog/common/inter"
-	clog "github.com/mysql-binlog/common/log"
 )
 
 /**
@@ -89,7 +89,7 @@ func (c *Cluster) checkIntegrated(ts int64) (bool, error) {
 	}
 
 	// take newly offset
-	off := &clog.IndexOffset{}
+	off := &meta.IndexOffset{}
 	if err := json.Unmarshal([]byte(o), off); err != nil {
 		log.Errorf("unmarshal json{%s} error %v", string(o), err)
 		return false, err
@@ -159,7 +159,7 @@ func (c *Cluster) checkSeparated(ts int64) (bool, error) {
 		}
 
 		// take newly offset
-		off := &clog.IndexOffset{}
+		off := &meta.IndexOffset{}
 		if err := json.Unmarshal([]byte(o), off); err != nil {
 			log.Errorf("unmarshal json{%s} error %v", string(o), err)
 			return false, err
@@ -183,6 +183,11 @@ func (c *Cluster) GetClusterPath() string {
 // SelectTables according to db reg and table reg, if none then return error
 func (c *Cluster) SelectTables(db, tb string) ([]string, error) {
 	log.Infof("lower case of db{%s} and tb{%s}", db, tb)
+	switch c.mode {
+	case inter.Integrated:
+		return []string{}, nil
+	}
+
 	dbReg := regexp.MustCompile(strings.ToLower(db))
 	tbReg := regexp.MustCompile(strings.ToLower(tb))
 

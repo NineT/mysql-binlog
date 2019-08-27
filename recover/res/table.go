@@ -39,12 +39,6 @@ const (
 	canceled = "canceled"
 )
 
-type int64s []int64
-
-func (s int64s) Len() int           { return len(s) }
-func (s int64s) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
-func (s int64s) Less(i, j int) bool { return s[i] < s[j] }
-
 // TableRecover
 type TableRecover struct {
 	table string           // table name
@@ -116,7 +110,7 @@ func (t *TableRecover) ExecutedGTID() string {
 }
 
 // selectLogs to apply MySQL binlog
-func (t *TableRecover) selectLogs(start, end int64) (int64s, error) {
+func (t *TableRecover) selectLogs(start, end int64) (inter.Int64s, error) {
 	ss, err := latestTime(start, t.path)
 	if err != nil {
 		log.Errorf("get latestTime log file according timestamp{%d} error{%v}", start, err)

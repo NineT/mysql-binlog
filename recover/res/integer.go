@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -89,7 +90,7 @@ func (t *IntegerRecover) ExecutedGTID() string {
 }
 
 // selectLogs to apply MySQL binlog
-func (t *IntegerRecover) selectLogs(start, end int64) (int64s, error) {
+func (t *IntegerRecover) selectLogs(start, end int64) (inter.Int64s, error) {
 	ss, err := latestTime(start, t.path)
 	if err != nil {
 		log.Errorf("get latestTime log file according timestamp{%d} error{%v}", start, err)
@@ -109,8 +110,10 @@ func (t *IntegerRecover) Recover() {
 			} else if strings.EqualFold(err.(error).Error(), canceled) {
 				log.Info("instance recovery canceled")
 			} else {
+				log.Error(err)
 				t.errs <- err.(error)
 			}
+
 		}
 		log.Infof("instance recover finish")
 
@@ -163,6 +166,7 @@ func (t *IntegerRecover) Recover() {
 			case replication.FORMAT_DESCRIPTION_EVENT:
 				if err := t.i.Begin(); err != nil {
 					log.Error(err)
+
 					panic(err)
 				}
 
@@ -170,12 +174,14 @@ func (t *IntegerRecover) Recover() {
 				// sql executor
 				if err := t.i.Execute([]byte(fmt.Sprintf("BINLOG '\n%s\n'%s", t.desc, inter.Delimiter))); err != nil {
 					log.Errorf("execute binlog description event error{%v}", err)
+					
 					panic(err)
 				}
 
 				// sql executor commit
 				if err := t.i.Commit(); err != nil {
 					log.Errorf("execute binlog desc event commit error{%v}", err)
+
 					panic(err)
 				}
 			case replication.QUERY_EVENT:
@@ -189,11 +195,13 @@ func (t *IntegerRecover) Recover() {
 				case "BEGIN":
 					if err := t.i.Begin(); err != nil {
 						log.Error(err)
+
 						panic(err)
 					}
 				case "COMMIT":
 					if err := t.i.Commit(); err != nil {
 						log.Error(err)
+
 						panic(err)
 					}
 				case "ROLLBACK":
@@ -201,6 +209,7 @@ func (t *IntegerRecover) Recover() {
 				default:
 					if err := t.i.Begin(); err != nil {
 						log.Error(err)
+
 						panic(err)
 					}
 					// first use db
@@ -208,6 +217,7 @@ func (t *IntegerRecover) Recover() {
 						use := fmt.Sprintf("use %s", qe.Schema)
 						if err := t.i.Execute([]byte(use)); err != nil {
 							log.Errorf("sql {%s} execute error{%v}", use, err)
+
 							panic(err)
 						}
 					}
@@ -215,10 +225,12 @@ func (t *IntegerRecover) Recover() {
 					// then execute ddl
 					if err := t.i.Execute(qe.Query); err != nil {
 						log.Error(err)
+
 						panic(err)
 					}
 					if err := t.i.Commit(); err != nil {
 						log.Error(err)
+
 						panic(err)
 					}
 				}
@@ -230,6 +242,7 @@ func (t *IntegerRecover) Recover() {
 
 				if err := t.i.Commit(); err != nil {
 					log.Error(err)
+
 					panic(err)
 				}
 			case replication.TABLE_MAP_EVENT:
@@ -273,6 +286,7 @@ func (t *IntegerRecover) Recover() {
 					bs := t.buffer.Bytes()
 					if err := t.i.Execute(bs); err != nil {
 						log.Errorf("execute on gtid{%s} error{%v}", t.cg.String(), err)
+
 						panic(err)
 					}
 
@@ -285,6 +299,7 @@ func (t *IntegerRecover) Recover() {
 				u, err := uuid.FromBytes(g.SID)
 				if err != nil {
 					log.Errorf("parse uuid from gtid event error{%v}", err)
+
 					panic(err)
 				}
 
@@ -292,12 +307,14 @@ func (t *IntegerRecover) Recover() {
 				c, err := mysql.ParseMysqlGTIDSet(s)
 				if err != nil {
 					log.Errorf("parse og{%s} error {%v}", s, err)
+
 					panic(err)
 				}
 				t.cg = c
 
 				if err := t.pos.UpdateGTID(s); err != nil {
 					log.Errorf("update gtid{%s} to merged gtid set{%s} error{%v}", s, t.pos.String(), err)
+
 					panic(err)
 				}
 			}

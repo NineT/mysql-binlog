@@ -78,6 +78,18 @@ func initUsingHttp(m *meta.DbMeta) (*handler.MergeConfig, error) {
 
 	// get master status
 	off := m.Off
+
+	lo, err := meta.LatestOffset(para.cfsPath, para.mode, m.Inst.CID)
+	if err != nil {
+		log.Errorf("take offset on cfs error %v", err)
+		return nil, err
+	}
+
+	if lo != nil {
+		// file not exits
+		off = lo.Local
+	}
+
 	if off == nil {
 		pos, err := m.Inst.MasterStatus()
 		if err != nil || pos.TrxGtid == "" {
@@ -89,6 +101,8 @@ func initUsingHttp(m *meta.DbMeta) (*handler.MergeConfig, error) {
 
 		off.CID = m.Inst.CID
 	}
+
+	// should check whether the latest binlog position in file index
 
 	log.Debugf("start binlog gtid{%s}, binlog file{%s}, binlog position{%d}", string(off.ExedGtid), off.BinFile, off.BinPos)
 

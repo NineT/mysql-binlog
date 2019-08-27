@@ -3,14 +3,14 @@ package log
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/mysql-binlog/common/inter"
+	"github.com/mysql-binlog/common/meta"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/zssky/log"
 
-	"github.com/mysql-binlog/common/meta"
+	"github.com/mysql-binlog/common/inter"
 )
 
 /***
@@ -22,13 +22,6 @@ const (
 	// IndexSuffix const name
 	IndexSuffix = ".index"
 )
-
-// IndexOffset including origin MySQL binlog offset and generated binlog offset
-type IndexOffset struct {
-	DumpFile string       `json:"file"`  // dump binlog file name
-	DumpPos  uint32       `json:"pos"`   // dump binlog position
-	Local    *meta.Offset `json:"local"` // generated local binlog offset
-}
 
 // IndexWriter binlog index using seconds as well for quick offset get
 type IndexWriter struct {
@@ -112,7 +105,7 @@ func (w *IndexWriter) Close() {
 }
 
 // Write offset to index file
-func (w *IndexWriter) Write(o *IndexOffset) error {
+func (w *IndexWriter) Write(o *meta.IndexOffset) error {
 	b, err := json.Marshal(o)
 	if err != nil {
 		log.Errorf("json marshal offset{%v} error %v", o, err)
@@ -133,7 +126,7 @@ func (w *IndexWriter) Write(o *IndexOffset) error {
 }
 
 // LastLine offset for binlog file
-func (w *IndexWriter) Tail() (*IndexOffset, error) {
+func (w *IndexWriter) Tail() (*meta.IndexOffset, error) {
 	name := fmt.Sprintf("%s/%d%s", w.dir, w.curr, IndexSuffix)
 
 	b, err := inter.LastLine(name)
@@ -148,7 +141,7 @@ func (w *IndexWriter) Tail() (*IndexOffset, error) {
 		return nil, nil
 	}
 
-	o := &IndexOffset{}
+	o := &meta.IndexOffset{}
 	if err := json.Unmarshal([]byte(b), o); err != nil {
 		log.Errorf("unmarshal json{%s} error %v", string(b), err)
 		return nil, err

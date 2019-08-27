@@ -1,6 +1,7 @@
 package res
 
 import (
+	"github.com/mysql-binlog/common/inter"
 	"io/ioutil"
 	"sort"
 	"strconv"
@@ -19,7 +20,7 @@ func rangeLogs(start, end int64, p string) ([]int64, error) {
 	}
 
 	// result
-	var rst int64s
+	var rst inter.Int64s
 	for _, f := range fs {
 		n := f.Name()
 		if strings.HasSuffix(n, logSuffix) {
