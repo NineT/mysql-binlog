@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -174,7 +173,7 @@ func (t *IntegerRecover) Recover() {
 				// sql executor
 				if err := t.i.Execute([]byte(fmt.Sprintf("BINLOG '\n%s\n'%s", t.desc, inter.Delimiter))); err != nil {
 					log.Errorf("execute binlog description event error{%v}", err)
-					
+
 					panic(err)
 				}
 

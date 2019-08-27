@@ -202,6 +202,11 @@ func LatestOffset(path, m string, clusterID int64) (*IndexOffset, error) {
 	p := fmt.Sprintf("%s/%d", path, clusterID)
 	log.Debugf("log file path %s", p)
 
+	if !inter.Exists(p) {
+		log.Warnf("path %s not exists", p)
+		return nil, nil
+	}
+
 	switch m {
 	case inter.Separated:
 		fs, err := ioutil.ReadDir(p)
@@ -229,11 +234,11 @@ func LatestOffset(path, m string, clusterID int64) (*IndexOffset, error) {
 				return nil, err
 			}
 
-			if mo != nil {
+			if off != nil && mo != nil {
 				if le, _ := LessEqual(mo.Local, off.Local); le {
 					mo = off
 				}
-			} else {
+			} else if off != nil {
 				mo = off
 			}
 		}
@@ -271,6 +276,13 @@ func latestOffsetOnDir(p string) (*IndexOffset, error) {
 
 	sort.Sort(ts)
 
+	if len(ts) == 0 {
+		// empty directory no need to continue
+		log.Warnf("empty directory %s no need to continue", p)
+		return nil, nil
+	}
+
+
 	idf := ""
 
 	// index file exists
@@ -284,6 +296,11 @@ func latestOffsetOnDir(p string) (*IndexOffset, error) {
 			log.Infof("index file %s exist ", f)
 			break
 		}
+	}
+
+	if idf == "" {
+		log.Warnf("no index file exist on directory %s", p)
+		return nil, nil
 	}
 
 	log.Debugf("read index file %s last line", idf)
