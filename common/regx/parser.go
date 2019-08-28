@@ -70,7 +70,7 @@ func Parse(ddl []byte, db []byte) ([][]byte, bool) {
 			// after table name
 			atb := getFullTable(st.NewName.Name.String(), st.NewName.Qualifier.String(), db)
 			tables = append(tables, atb)
-		case sqlparser.CreateTrggerStr:
+		case sqlparser.CreateTriggerStr:
 			// take trigger using
 			fullTb := getFullTable(st.Trigger.Table.Qualifier.String(), st.NewName.Name.String(), db)
 			tables = append(tables, fullTb)
