@@ -42,7 +42,7 @@ type IntegerRecover struct {
 	parser   *replication.BinlogParser // binlog parser
 	desc     []byte                    // desc format event
 	rowBuf   *bytes.Buffer             // row data buffer
-	tableBuf *bytes.Buffer             // table buffer
+	tableBuf map[uint64][]byte             // table buffer
 }
 
 // NewInteger for recover
@@ -77,7 +77,7 @@ func NewInteger(clusterPath string, time int64, ctx context.Context, o *meta.Off
 		errs:     errs,
 		parser:   replication.NewBinlogParser(),
 		rowBuf:   bytes.NewBuffer(nil),
-		tableBuf: bytes.NewBuffer(nil),
+		tableBuf: make(map[uint64][]byte),
 	}, nil
 }
 
@@ -190,7 +190,7 @@ func (t *IntegerRecover) Recover() {
 					panic(err)
 				}
 			case replication.QUERY_EVENT:
-				t.tableBuf.Reset()
+				t.resetBuffer()
 				if t.cg != nil && t.og.Contain(t.cg) {
 					log.Debugf("current gtid{%s} already executed on snapshot {%s}", t.cg.String(), t.off.ExedGtid)
 					return nil
@@ -241,7 +241,7 @@ func (t *IntegerRecover) Recover() {
 					}
 				}
 			case replication.XID_EVENT:
-				t.tableBuf.Reset()
+				t.resetBuffer()
 				if t.cg != nil && t.og.Contain(t.cg) {
 					log.Debugf("current gtid{%s} already executed on snapshot {%s}", t.cg.String(), t.off.ExedGtid)
 					return nil
@@ -257,11 +257,17 @@ func (t *IntegerRecover) Recover() {
 					log.Debugf("current gtid{%s} already executed on snapshot {%s}", t.cg.String(), t.off.ExedGtid)
 					return nil
 				}
+				tme := e.Event.(*replication.TableMapEvent)
+
 				data := utils.Base64Encode(e.RawData)
 				// write to buffer first
-				t.rowBuf.WriteString(fmt.Sprintf("BINLOG '\n%s", data))
+				if t.rowBuf.Len() == 0 {
+					t.rowBuf.WriteString(fmt.Sprintf("\nBINLOG '\n%s", data))
+				} else {
+					t.rowBuf.Write(data)
+				}
 
-				t.tableBuf.Write(data)
+				t.tableBuf[tme.TableID] = data
 			case replication.WRITE_ROWS_EVENTv0,
 				replication.WRITE_ROWS_EVENTv1,
 				replication.WRITE_ROWS_EVENTv2,
@@ -311,11 +317,14 @@ func (t *IntegerRecover) Recover() {
 					// reset buffer for reuse
 					t.rowBuf.Reset()
 					if exceedFlag {
-						t.rowBuf.WriteString(fmt.Sprintf("BINLOG '\n%s", t.tableBuf.Bytes()))
+						t.rowBuf.WriteString("\nBINLOG '\n")
+						for _, d := range t.tableBuf {
+							t.rowBuf.Write(d)
+						}
 					}
 				}
 			case replication.GTID_EVENT:
-				t.tableBuf.Reset()
+				t.resetBuffer()
 				g := e.Event.(*replication.GTIDEvent)
 
 				u, err := uuid.FromBytes(g.SID)
@@ -368,4 +377,10 @@ func (t *IntegerRecover) Recover() {
 			return
 		}
 	}
+}
+
+// resetBuffer
+func (t *IntegerRecover) resetBuffer() {
+	t.tableBuf = make(map[uint64][]byte)
+	t.rowBuf.Reset()
 }

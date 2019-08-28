@@ -349,6 +349,8 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 			mc.relatedTables[table] = false
 		}
 
+
+		log.Debugf("write table map event %s, table id %d ", tme.Table, tme.TableID)
 		// table map event
 		h.EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false, false)
 
@@ -372,6 +374,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 				inter.CharStd(string(re.Table.Table)))
 		}
 
+		log.Debugf("rows table map event %s, table id %d ", re.Table.Table, re.Table.TableID)
 		mc.tableHandlers[table].EventChan <- blog.Binlog2Data(ev, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false, false)
 
 	case replication.INCIDENT_EVENT:
@@ -410,7 +413,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 func (mc *MergeConfig) newHandler(curr uint32, table string, gch chan []byte) {
 	log.Info("table binlog file path with current ", fmt.Sprintf("%s/%s/%d.log", mc.path, table, curr))
 
-	evh, err := binlog.NewEventHandler(mc.path, table, curr, mc.cid, blog.Binlog2Data(mc.formatDesc, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false, false), mc.After, gch)
+	evh, err := binlog.NewEventHandler(mc.mode, mc.path, table, curr, mc.cid, blog.Binlog2Data(mc.formatDesc, mc.checksumAlg, mc.latestGtid.TrxGtid, []byte(mc.gtid.String()), mc.binFile, false, false), mc.After, gch)
 	if err != nil {
 		debug.PrintStack()
 		panic(err)

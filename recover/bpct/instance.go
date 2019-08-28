@@ -8,27 +8,32 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
 	// mysql
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/zssky/log"
+
+	"github.com/mysql-binlog/common/inter"
 )
 
 type GtidMode string
 
 const (
-	gtidModeOFF              GtidMode = "OFF"
-	gtidModeOffPermissive    GtidMode = "OFF_PERMISSIVE"
-	gtidModeOnPermissive     GtidMode = "ON_PERMISSIVE"
-	gtidModeON               GtidMode = "ON"
+	debugMode = false
+
+	gtidModeOFF           GtidMode = "OFF"
+	gtidModeOffPermissive GtidMode = "OFF_PERMISSIVE"
+	gtidModeOnPermissive  GtidMode = "ON_PERMISSIVE"
+	gtidModeON            GtidMode = "ON"
 
 	// 16M
-	defaultMaxAllowedPackage          = 1 << 24
+	defaultMaxAllowedPackage = 1 << 24
 
 	// 8k
-	defaultMaxRowEventSize            = 1 << 13
+	defaultMaxRowEventSize = 1 << 13
 )
 
 // Instance MySQL server
@@ -165,6 +170,20 @@ func (i *Instance) Close() {
 
 // Begin
 func (i *Instance) Begin() error {
+	if debugMode {
+		f, _ := os.OpenFile("/tmp/test.sql", os.O_CREATE|os.O_APPEND|os.O_RDWR, inter.FileMode)
+		defer f.Close()
+
+		if _, err := f.WriteString("BEGIN\n"); err != nil {
+
+		}
+
+		if _, err := f.WriteString(inter.Delimiter); err != nil {
+
+		}
+		return nil
+	}
+
 	log.Debugf("begin rst signal flag %d", i.rst)
 	if i.rst != 0 {
 		if err := i.Commit(); err != nil {
@@ -187,6 +206,17 @@ func (i *Instance) Begin() error {
 
 // Execute bins for binlog statement
 func (i *Instance) Execute(bins []byte) error {
+	if debugMode {
+		f, _ := os.OpenFile("/tmp/test.sql", os.O_CREATE|os.O_APPEND|os.O_RDWR, inter.FileMode)
+		defer f.Close()
+
+		if _, err := f.Write(bins); err != nil {
+
+		}
+
+		return nil
+	}
+
 	log.Debug("execute binlog statement ", " execute size ", len(bins))
 
 	if _, err := i.tx.Exec(string(bins)); err != nil {
@@ -198,6 +228,20 @@ func (i *Instance) Execute(bins []byte) error {
 
 // Commit commit transaction
 func (i *Instance) Commit() error {
+	if debugMode {
+		f, _ := os.OpenFile("/tmp/test.sql", os.O_CREATE|os.O_APPEND|os.O_RDWR, inter.FileMode)
+		defer f.Close()
+
+		if _, err := f.WriteString("COMMIT"); err != nil {
+
+		}
+
+		if _, err := f.WriteString(inter.Delimiter); err != nil {
+
+		}
+		return nil
+	}
+
 	log.Debug("commit")
 	i.rst --
 	return i.tx.Commit()

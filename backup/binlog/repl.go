@@ -16,6 +16,7 @@ import (
 
 // TableEventHandler 表的事件处理器
 type TableEventHandler struct {
+	mode         string               // dump mode type
 	Table        string               // Table name
 	Size         int64                // current binlog size
 	After        *final.After         // after math
@@ -31,7 +32,7 @@ type TableEventHandler struct {
 }
 
 // NewEventHandler new event handler for binlog writer
-func NewEventHandler(path, table string, curr uint32, cid int64, desc *blog.DataEvent, after *final.After, gch chan []byte) (*TableEventHandler, error) {
+func NewEventHandler(mode, path, table string, curr uint32, cid int64, desc *blog.DataEvent, after *final.After, gch chan []byte) (*TableEventHandler, error) {
 	log.Debug("new event handler")
 
 	var binW *blog.BinlogWriter
@@ -120,6 +121,7 @@ func NewEventHandler(path, table string, curr uint32, cid int64, desc *blog.Data
 
 	return &TableEventHandler{
 		cid:   cid,
+		mode:  mode,
 		Table: table,
 		After: after,
 		Stamp: int64(curr),
@@ -164,7 +166,7 @@ func (h *TableEventHandler) HandleLogEvent() {
 
 // handle handle binlog event into binlog file
 func (h *TableEventHandler) handle(t *blog.DataEvent) error {
-	log.Debug("handle")
+	log.Debugf("handle %s %s %s", t.Header.EventType, t.ExedGtid, t.TrxGtid)
 	if h.offset != nil {
 		// current offset for
 		co := &meta.Offset{
@@ -227,16 +229,25 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 		replication.UPDATE_ROWS_EVENTv0,
 		replication.UPDATE_ROWS_EVENTv1,
 		replication.UPDATE_ROWS_EVENTv2:
-		// save last row event wait for flush when commit arrived
-		pre := h.lastRowEvent
-
-		h.lastRowEvent = t
-
-		// write event
-		if pre != nil {
-			if err := h.binWriter.WriteEvent(pre); err != nil {
+		switch h.mode {
+		case inter.Integrated:
+			// one binlog file for all data
+			if err := h.binWriter.WriteEvent(t); err != nil {
 				log.Errorf("write event {%s} to dir{%s} error{%v}", h.binWriter.FullName, h.binWriter.Dir, err)
 				return err
+			}
+		case inter.Separated:
+			// save last row event wait for flush when commit arrived
+			pre := h.lastRowEvent
+
+			h.lastRowEvent = t
+
+			// write event
+			if pre != nil {
+				if err := h.binWriter.WriteEvent(pre); err != nil {
+					log.Errorf("write event {%s} to dir{%s} error{%v}", h.binWriter.FullName, h.binWriter.Dir, err)
+					return err
+				}
 			}
 		}
 	default:
@@ -253,7 +264,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 // commit event to binlog
 func (h *TableEventHandler) commit(t *blog.DataEvent, pos uint32) error {
 	// write last row event and fix event stmt_flag
-	if h.lastRowEvent != nil {
+	if h.mode == inter.Separated && h.lastRowEvent != nil {
 		// old flags
 		of := binary.LittleEndian.Uint16(h.lastRowEvent.Data[h.lastRowEvent.RowsHeader.FlagsPos:])
 
