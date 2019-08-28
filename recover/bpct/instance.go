@@ -288,7 +288,7 @@ func (i *Instance) maxPackageSize() int {
 
 	rs, err := i.db.Query(sql)
 	if err != nil {
-		log.Errorf("query sql {%s} error {%v}", sql, err)
+		log.Warnf("query sql {%s} error {%v}", sql, err)
 		return defaultMaxAllowedPackage
 	}
 	defer rs.Close()
@@ -296,13 +296,13 @@ func (i *Instance) maxPackageSize() int {
 	for rs.Next() {
 		var m string
 		if err := rs.Scan(&m); err != nil {
-			log.Errorf("scan rows error{%v}", err)
+			log.Warnf("scan rows error{%v}", err)
 			return defaultMaxAllowedPackage
 		}
 
 		s, err := strconv.ParseInt(m, 10, 32)
 		if err != nil {
-			log.Errorf("get max allowed package size error {%v}", err)
+			log.Warnf("get max allowed package size error {%v}", err)
 			return defaultMaxAllowedPackage
 		}
 		return int(s)
@@ -316,7 +316,7 @@ func (i *Instance) maxRowEventSize() int {
 
 	rs, err := i.db.Query(sql)
 	if err != nil {
-		log.Errorf("query sql {%s} error {%v}", sql, err)
+		log.Warnf("query sql {%s} error {%v}", sql, err)
 		return defaultMaxRowEventSize
 	}
 	defer rs.Close()
@@ -324,13 +324,13 @@ func (i *Instance) maxRowEventSize() int {
 	for rs.Next() {
 		var m string
 		if err := rs.Scan(&m); err != nil {
-			log.Errorf("scan rows error{%v}", err)
+			log.Warnf("scan rows error{%v}", err)
 			return defaultMaxRowEventSize
 		}
 
 		s, err := strconv.ParseInt(m, 10, 32)
 		if err != nil {
-			log.Errorf("get max allowed package size error {%v}", err)
+			log.Warnf("get max allowed package size error {%v}", err)
 			return defaultMaxRowEventSize
 		}
 		return int(s)

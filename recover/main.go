@@ -78,7 +78,8 @@ func main() {
 	log.Infof("all table timestamp > parameter timestamp{%d} is %v", t, b)
 	if !b {
 		// all table timestamp < parameter timestamp
-		log.Warnf("no table timestamp < parameter timestamp {%d}", t)
+		log.Warnf("latest timestamp for increment data < para.timestamp", t)
+		os.Exit(0)
 	}
 
 	// recover tables

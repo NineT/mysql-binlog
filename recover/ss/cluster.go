@@ -66,6 +66,7 @@ func (c *Cluster) checkIntegrated(ts int64) (bool, error) {
 
 	if !exists {
 		// no log file exist
+		log.Warnf("no binlog file exist on dir %s", c.path)
 		return false, nil
 	}
 
@@ -102,6 +103,7 @@ func (c *Cluster) checkIntegrated(ts int64) (bool, error) {
 	}
 
 	// no table timestamp > parameter timestamp, and return nil
+	log.Warnf("increment binlog file latest timestamp %d < parameter timestamp %d", off.Local.Time, ts)
 	return false, nil
 }
 
