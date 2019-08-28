@@ -347,3 +347,8 @@ func getch(decoder *base64Decoder) bool {
 	decoder.state++
 	return false
 }
+
+// AboutEncodedSize
+func AboutEncodedSize(s int) int {
+	return (s << 1) - (s >> 1)
+}

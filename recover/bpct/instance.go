@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 
 	// mysql
@@ -18,10 +19,16 @@ import (
 type GtidMode string
 
 const (
-	gtidModeOFF           GtidMode = "OFF"
-	gtidModeOffPermissive GtidMode = "OFF_PERMISSIVE"
-	gtidModeOnPermissive  GtidMode = "ON_PERMISSIVE"
-	gtidModeON            GtidMode = "ON"
+	gtidModeOFF              GtidMode = "OFF"
+	gtidModeOffPermissive    GtidMode = "OFF_PERMISSIVE"
+	gtidModeOnPermissive     GtidMode = "ON_PERMISSIVE"
+	gtidModeON               GtidMode = "ON"
+
+	// 16M
+	defaultMaxAllowedPackage          = 1 << 24
+
+	// 8k
+	defaultMaxRowEventSize            = 1 << 13
 )
 
 // Instance MySQL server
@@ -180,7 +187,7 @@ func (i *Instance) Begin() error {
 
 // Execute bins for binlog statement
 func (i *Instance) Execute(bins []byte) error {
-	log.Debug("execute binlog statement ", " exeucte size ", len(bins))
+	log.Debug("execute binlog statement ", " execute size ", len(bins))
 
 	if _, err := i.tx.Exec(string(bins)); err != nil {
 		log.Error(err)
@@ -218,4 +225,72 @@ func (i *Instance) GtidMode() GtidMode {
 	}
 
 	return gtidModeOFF
+}
+
+// MaxBinSyntaxSize
+func (i *Instance) MaxBinSyntaxSize() int {
+	// max package size
+	mp := i.maxPackageSize()
+
+	// max event size
+	me := i.maxRowEventSize()
+
+	return mp - (me << 1) + (me >> 1)
+}
+
+// maxPackageSize for MySQL - (defaultMaxRowEventSize << 1 - defaultMaxRowEventSize >> 1)
+func (i *Instance) maxPackageSize() int {
+	sql := "SELECT @@GLOBAL.MAX_ALLOWED_PACKET"
+
+	rs, err := i.db.Query(sql)
+	if err != nil {
+		log.Errorf("query sql {%s} error {%v}", sql, err)
+		return defaultMaxAllowedPackage
+	}
+	defer rs.Close()
+
+	for rs.Next() {
+		var m string
+		if err := rs.Scan(&m); err != nil {
+			log.Errorf("scan rows error{%v}", err)
+			return defaultMaxAllowedPackage
+		}
+
+		s, err := strconv.ParseInt(m, 10, 32)
+		if err != nil {
+			log.Errorf("get max allowed package size error {%v}", err)
+			return defaultMaxAllowedPackage
+		}
+		return int(s)
+	}
+
+	return defaultMaxAllowedPackage
+}
+
+func (i *Instance) maxRowEventSize() int {
+	sql := "SELECT @@GLOBAL.BINLOG_ROW_EVENT_MAX_SIZE"
+
+	rs, err := i.db.Query(sql)
+	if err != nil {
+		log.Errorf("query sql {%s} error {%v}", sql, err)
+		return defaultMaxRowEventSize
+	}
+	defer rs.Close()
+
+	for rs.Next() {
+		var m string
+		if err := rs.Scan(&m); err != nil {
+			log.Errorf("scan rows error{%v}", err)
+			return defaultMaxRowEventSize
+		}
+
+		s, err := strconv.ParseInt(m, 10, 32)
+		if err != nil {
+			log.Errorf("get max allowed package size error {%v}", err)
+			return defaultMaxRowEventSize
+		}
+		return int(s)
+	}
+
+	return defaultMaxRowEventSize
 }

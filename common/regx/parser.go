@@ -67,10 +67,13 @@ func Parse(ddl []byte, db []byte) ([][]byte, bool) {
 		case sqlparser.RenameStr:
 			btb := getFullTable(st.Table.Name.String(), st.Table.Qualifier.String(), db)
 			tables = append(tables, btb)
-
 			// after table name
 			atb := getFullTable(st.NewName.Name.String(), st.NewName.Qualifier.String(), db)
 			tables = append(tables, atb)
+		case sqlparser.CreateTrggerStr:
+			// take trigger using
+			fullTb := getFullTable(st.Trigger.Table.Qualifier.String(), st.NewName.Name.String(), db)
+			tables = append(tables, fullTb)
 		}
 	case *sqlparser.DBDDL:
 		fmt.Println(st.DBName)

@@ -58,9 +58,10 @@ type TableRecover struct {
 	coCh  chan interface{} // coordinate channel
 
 	// followings are for event type
-	parser *replication.BinlogParser // binlog parser
-	desc   []byte                    // desc format event
-	buffer bytes.Buffer              // byte buffer
+	parser   *replication.BinlogParser // binlog parser
+	desc     []byte                    // desc format event
+	rowBuf   *bytes.Buffer             // row data buffer
+	tableBuf *bytes.Buffer             // table buffer
 }
 
 // NewTable for outside use
@@ -82,20 +83,22 @@ func NewTable(table, clusterPath string, time int64, ctx context.Context, o *met
 	}
 
 	return &TableRecover{
-		table:  table,
-		path:   fmt.Sprintf("%s/%s", clusterPath, table),
-		time:   time,
-		ctx:    ctx,
-		off:    o,
-		pos:    l,
-		og:     og,
-		user:   user,
-		pass:   pass,
-		port:   port,
-		wg:     wg,
-		errs:   errs,
-		coCh:   coCh,
-		parser: replication.NewBinlogParser(),
+		table:    table,
+		path:     fmt.Sprintf("%s/%s", clusterPath, table),
+		time:     time,
+		ctx:      ctx,
+		off:      o,
+		pos:      l,
+		og:       og,
+		user:     user,
+		pass:     pass,
+		port:     port,
+		wg:       wg,
+		errs:     errs,
+		coCh:     coCh,
+		parser:   replication.NewBinlogParser(),
+		rowBuf:   bytes.NewBuffer(nil),
+		tableBuf: bytes.NewBuffer(nil),
 	}, nil
 }
 
@@ -167,6 +170,9 @@ func (t *TableRecover) Recover() {
 		return
 	}
 
+	// take max bin syntax size
+	pmx := ins.MaxBinSyntaxSize()
+
 	onEventFunc := func(e *replication.BinlogEvent) error {
 		select {
 		case <-t.ctx.Done():
@@ -200,6 +206,7 @@ func (t *TableRecover) Recover() {
 					panic(err)
 				}
 			case replication.QUERY_EVENT:
+				t.tableBuf.Reset()
 				if t.cg != nil && t.og.Contain(t.cg) {
 					log.Debugf("current gtid{%s} already executed on snapshot {%s}", t.cg.String(), t.off.ExedGtid)
 					return nil
@@ -235,7 +242,7 @@ func (t *TableRecover) Recover() {
 						panic(err)
 					}
 					// first use db
-					if e.Header.Flags&inter.LogEventSuppressUseF == 0 && qe.Schema != nil && len(qe.Schema) != 0 {
+					if clog.SuppressUseCheck(e.Header.Flags) && qe.Schema != nil && len(qe.Schema) != 0 {
 						use := fmt.Sprintf("use %s", qe.Schema)
 						if err := t.i.Execute([]byte(use)); err != nil {
 							log.Errorf("sql {%s} execute error{%v}", use, err)
@@ -254,6 +261,7 @@ func (t *TableRecover) Recover() {
 					}
 				}
 			case replication.XID_EVENT:
+				t.tableBuf.Reset()
 				if t.cg != nil && t.og.Contain(t.cg) {
 					log.Debugf("current gtid{%s} already executed on snapshot {%s}", t.cg.String(), t.off.ExedGtid)
 					return nil
@@ -268,8 +276,12 @@ func (t *TableRecover) Recover() {
 					log.Debugf("current gtid{%s} already executed on snapshot {%s}", t.cg.String(), t.off.ExedGtid)
 					return nil
 				}
+
+				data := utils.Base64Encode(e.RawData)
 				// write to buffer first
-				t.buffer.WriteString(fmt.Sprintf("BINLOG '\n%s", utils.Base64Encode(e.RawData)))
+				t.rowBuf.WriteString(fmt.Sprintf("BINLOG '\n%s", data))
+
+				t.tableBuf.Write(data)
 			case replication.WRITE_ROWS_EVENTv0,
 				replication.WRITE_ROWS_EVENTv1,
 				replication.WRITE_ROWS_EVENTv2,
@@ -285,30 +297,42 @@ func (t *TableRecover) Recover() {
 					return nil
 				}
 
+				// check current gtid
+				exceedFlag := false
+
 				// all data into no uniq check and foreign key check
 				// all rows into no foreign key check and on uniq key check
 				re := e.Event.(*replication.RowsEvent)
-				re.Flags = re.Flags | clog.RowEventNoForeignKeyChecks | clog.RowEventNoUniqueKeyChecks
+				re.Flags = clog.ApplyNoFkCheck(re.Flags)
+
+				if t.rowBuf.Len() + utils.AboutEncodedSize(len(e.RawData)) > pmx && !clog.StmtEndFlagCheck(re.Flags) {
+					exceedFlag = true
+
+					// todo 1, fix flags = stmt flag
+					re.Flags = clog.ApplyStmtEndFlag(re.Flags)
+				}
 
 				fs := make([]byte, 2)
 				binary.LittleEndian.PutUint16(fs, re.Flags)
 				e.RawData[replication.EventHeaderSize+re.RowsHeader.FlagsPos] = fs[0]
 				e.RawData[replication.EventHeaderSize+re.RowsHeader.FlagsPos+1] = fs[1]
 
-				t.buffer.WriteString(fmt.Sprintf("\n%s", utils.Base64Encode(e.RawData)))
+				t.rowBuf.WriteString(fmt.Sprintf("\n%s", utils.Base64Encode(e.RawData)))
 
-				if e.Event.(*replication.RowsEvent).Flags == StmtEndFlag {
-					t.buffer.WriteString(fmt.Sprintf("\n'%s", inter.Delimiter))
+				if clog.StmtEndFlagCheck(re.Flags) {
+					t.rowBuf.WriteString(fmt.Sprintf("\n'%s", inter.Delimiter))
 
 					// execute
-					bs := t.buffer.Bytes()
-					if err := t.i.Execute(bs); err != nil {
-						log.Errorf("table {%s} execute on gtid{%s} error{%v}", t.table, t.cg.String(), err)
+					bs := t.rowBuf.Bytes()
+					if err := ins.Execute(bs); err != nil {
 						panic(err)
 					}
 
 					// reset buffer for reuse
-					t.buffer.Reset()
+					t.rowBuf.Reset()
+					if exceedFlag {
+						t.rowBuf.WriteString(fmt.Sprintf("BINLOG '\n%s", t.tableBuf.Bytes()))
+					}
 				}
 			case replication.GTID_EVENT:
 				g := e.Event.(*replication.GTIDEvent)

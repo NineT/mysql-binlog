@@ -121,3 +121,13 @@ func TestInstance_GtidMode(t *testing.T) {
 
 	log.Infof("gtid mode %v", i.GtidMode())
 }
+
+func TestInstance_MaxPackageSize(t *testing.T) {
+	i, err := NewInstance("root", "secret", 3306)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer i.Close()
+
+	log.Infof("gtid mode %v", i.maxPackageSize())
+}

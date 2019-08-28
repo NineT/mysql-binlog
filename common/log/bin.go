@@ -39,6 +39,9 @@ const (
 
 	// no unique key checks
 	RowEventNoUniqueKeyChecks = 0x0004
+
+	// LogEventSuppressUseF
+	LogEventSuppressUseF = 0x0008
 )
 
 // DataEvent
@@ -412,4 +415,27 @@ func (e *DataEvent) Copy() *DataEvent {
 		BinFile:  e.BinFile,
 		IsDDL:    e.IsDDL,
 	}
+}
+
+// StmtEndFlagCheck
+func StmtEndFlagCheck(flag uint16) bool {
+	return (flag & StmtEndFlag) == StmtEndFlag
+}
+
+// ApplyStmtEndFlag
+func ApplyStmtEndFlag(flag uint16) uint16 {
+	flag |= StmtEndFlag
+	return flag
+}
+
+// ApplyNoFkCheck 
+func ApplyNoFkCheck(flag uint16) uint16 {
+	flag = flag | RowEventNoForeignKeyChecks | RowEventNoUniqueKeyChecks
+	return flag
+}
+
+// SuppressUseCheck
+func SuppressUseCheck(flag uint16) bool {
+	flag = flag & LogEventSuppressUseF
+	return flag == 0
 }
