@@ -6,6 +6,7 @@ const (
 	ReadRequestError = 1101
 	DumpError        = 1102
 	ClusterIDNotFoundError = 1103
+	GetBackFolderStatError = 1104
 )
 
 var (
@@ -15,5 +16,6 @@ var (
 		ReadRequestError: "read request error %v",
 		DumpError:        "dump cluster id{%d} error{%v}",
 		ClusterIDNotFoundError: "cluster id {%d} not found on this server",
+		GetBackFolderStatError: "get local backup folder stat err {%v}",
 	}
 )

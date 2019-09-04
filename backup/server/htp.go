@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/zssky/log"
 
@@ -217,6 +219,7 @@ func (h *HttpServer) Start() {
 	http.HandleFunc("/", h.heartbeat)
 	http.HandleFunc("/start", h.start)
 	http.HandleFunc("/stop", h.stop)
+	http.HandleFunc("/folder", h.folder)
 
 	log.Info("start http server :8888")
 	if err := http.ListenAndServe(":8888", nil); err != nil {
@@ -430,4 +433,35 @@ func (h *HttpServer) stop(w http.ResponseWriter, r *http.Request) {
 	h.mcs[req.Inst.CID].Close()
 
 	delete(h.mcs, req.Inst.CID)
+}
+
+// folder get local backup folder stat
+func (h *HttpServer) folder(w http.ResponseWriter, r *http.Request) {
+	resp := &Response{
+		Code:    Success,
+		Message: Errs[Success],
+	}
+
+	// writer data to response writer
+	defer func() {
+		bt, err := json.Marshal(resp)
+		if err != nil {
+			log.Errorf("json marshal error %v", err)
+			return
+		}
+		if _, err := w.Write(bt); err != nil {
+			log.Errorf("writer ok package to response-writer error %v", err)
+		}
+	}()
+
+	fileInfo, err := os.Stat(para.cfsPath)
+	if err != nil {
+		resp.Code = GetBackFolderStatError
+		resp.Message = fmt.Sprintf(Errs[GetBackFolderStatError], err)
+		log.Error(resp.Message)
+		return
+	}
+	fs := fileInfo.Sys().(*syscall.Stat_t)
+
+	resp.Data = fs
 }
