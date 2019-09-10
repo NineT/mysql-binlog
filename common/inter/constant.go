@@ -71,7 +71,7 @@ const (
 	LogEventSuppressUseF = uint16(0x8)
 
 	// FileLimitSize binlog file size 1g
-	FileLimitSize = uint32(1024) * uint32(1024) * uint32(1024)
+	FileLimitSize = uint64(1024) * uint64(1024) * uint64(1024)
 
 	// BufferSize channel buffer size
 	BufferSize = 64

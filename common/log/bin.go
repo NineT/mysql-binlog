@@ -68,7 +68,7 @@ type BinlogWriter struct {
 	compress   bool                     // compress
 	xid        uint64                   // transaction id
 	crc        uint32                   // crc 32 值
-	logPos     uint32                   // logPos 文件位置
+	logPos     uint64                   // logPos 文件位置
 }
 
 // NewBinlogWriter new binlog writer for binlog write
@@ -116,7 +116,7 @@ func NewBinlogWriter(path, table string, curr uint32, desc *DataEvent) (*BinlogW
 }
 
 // RecoverWriter using the origin writer to the log file
-func RecoverWriter(path, table string, curr, logPos uint32, desc *DataEvent) (*BinlogWriter, error) {
+func RecoverWriter(path, table string, curr uint32, logPos uint64, desc *DataEvent) (*BinlogWriter, error) {
 	w := &BinlogWriter{
 		Name:       fmt.Sprintf("%d%s", curr, LogSuffix),
 		Dir:        fmt.Sprintf("%s%s", path, table),
@@ -240,7 +240,7 @@ func (b *BinlogWriter) flushLogs(curr uint32) error {
 	// reset event type, event size, log position 
 	b.lastHeader.EventType = replication.ROTATE_EVENT
 	b.lastHeader.EventSize = uint32(replication.EventHeaderSize) + uint32(len(bts)) + uint32(CRC32Size)
-	b.lastHeader.LogPos = b.logPos
+	b.lastHeader.LogPos = uint32(b.logPos)
 
 	if err := b.WriteEvent(&DataEvent{
 		Header: b.lastHeader,
@@ -309,7 +309,7 @@ func (b *BinlogWriter) WriteEvent(e *DataEvent) error {
 	size := replication.EventHeaderSize + len(e.Data) + CRC32Size
 
 	// calculate binlog position
-	e.Header.LogPos = b.logPos + uint32(size)
+	e.Header.LogPos = uint32(b.logPos + uint64(size))
 	ht := e.Header.Encode()
 	b.crc = crc32.ChecksumIEEE(ht)
 
@@ -321,7 +321,7 @@ func (b *BinlogWriter) WriteEvent(e *DataEvent) error {
 	}
 
 	// set binlog offset
-	b.logPos += uint32(size)
+	b.logPos += uint64(size)
 
 	// write data
 	if _, err := b.write(e.Data); err != nil {

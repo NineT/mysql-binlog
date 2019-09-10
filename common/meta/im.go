@@ -35,7 +35,7 @@ type Offset struct {
 	TrxGtid  string `json:"trxgtid"`   // transaction gtid equals to gtid exists on gtid event  eg. 2d784ad8-8f7a-4916-858e-d7069e5a24b2:100
 	Time     uint32 `json:"time"`      // timestamp
 	BinFile  string `json:"file"`      // binlog File
-	BinPos   uint32 `json:"pos"`       // binlog position
+	BinPos   uint64 `json:"pos"`       // binlog position
 	Counter  int    `json:"-"`         // counter
 	Header   bool   `json:"-"`         // header flag
 }
@@ -167,7 +167,7 @@ func (i *Instance) MasterStatus() (*Offset, error) {
 		ExedGtid: g.String(),
 		TrxGtid:  g.String(),
 		BinFile:  f,
-		BinPos:   uint32(p),
+		BinPos:   uint64(p),
 	}, nil
 }
 

@@ -286,7 +286,7 @@ func (mc *MergeConfig) EventHandler(ev *replication.BinlogEvent) {
 				Header:   false,
 				Time:     ev.Header.Timestamp,
 				BinFile:  mc.binFile,
-				BinPos:   ev.Header.LogPos,
+				BinPos:   uint64(ev.Header.LogPos),
 			})
 		}
 	case replication.STOP_EVENT:
@@ -486,6 +486,6 @@ func (mc *MergeConfig) handleCommit(ev *replication.BinlogEvent) {
 		Header:   false,
 		Time:     ev.Header.Timestamp,
 		BinFile:  mc.binFile,
-		BinPos:   ev.Header.LogPos,
+		BinPos:   uint64(ev.Header.LogPos),
 	})
 }

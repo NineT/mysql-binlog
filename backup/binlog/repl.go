@@ -174,7 +174,7 @@ func (h *TableEventHandler) handle(t *blog.DataEvent) error {
 			TrxGtid:  string(t.TrxGtid),
 			Time:     t.Header.Timestamp,
 			BinFile:  t.BinFile,
-			BinPos:   t.Header.LogPos,
+			BinPos:   uint64(t.Header.LogPos),
 		}
 
 		flag, err := meta.LessEqual(co, h.offset)
